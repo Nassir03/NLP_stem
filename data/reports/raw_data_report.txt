@@ -1,0 +1,46 @@
+Raw Data Inspection Report
+==========================
+
+Total pairs: 110336
+Valid non-empty pairs: 108697
+Unique pairs: 106139
+Duplicate pairs: 2558
+STEM-specific pairs: 12568
+Missing English values: 1639
+Missing Swahili values: 1639
+Average English length: 18.5 words
+Average Swahili length: 18.45 words
+Maximum English length: 2105 words
+Maximum Swahili length: 4225 words
+Rows containing formulas, numbers, or units: 52750 (48.53%)
+
+Subject distribution:
+- general_or_unknown: 96129
+- technology_computing: 3596
+- physics: 3015
+- mathematics: 2830
+- biology: 2373
+- chemistry: 754
+
+Language distribution:
+{
+  "english_column": {
+    "english_like": 96371,
+    "uncertain": 12091,
+    "unknown": 208,
+    "swahili_like": 27
+  },
+  "swahili_column": {
+    "swahili_like": 97503,
+    "uncertain": 10112,
+    "english_like": 880,
+    "unknown": 202
+  }
+}
+
+Source distribution:
+- WikiMatrix.en-sw: 51386
+- GlobalVoices.en-sw: 30782
+- wikimedia.en-sw: 16288
+- TED2020.en-sw: 9634
+- ELRC-wikipedia_health.en-sw: 607

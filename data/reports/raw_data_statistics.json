@@ -1,0 +1,58 @@
+{
+  "total_sentence_pairs": 110336,
+  "valid_non_empty_pairs": 108697,
+  "missing_english": 1639,
+  "missing_swahili": 1639,
+  "duplicate_pairs": 2558,
+  "unique_pairs": 106139,
+  "stem_specific_pairs": 12568,
+  "formula_number_unit_pairs": 52750,
+  "formula_number_unit_percentage": 48.53,
+  "average_english_words": 18.5,
+  "average_swahili_words": 18.45,
+  "maximum_english_words": 2105,
+  "maximum_swahili_words": 4225,
+  "maximum_english_characters": 17464,
+  "maximum_swahili_characters": 25212,
+  "english_word_percentiles": {
+    "p50": 16,
+    "p90": 34,
+    "p95": 42,
+    "p99": 66
+  },
+  "swahili_word_percentiles": {
+    "p50": 15,
+    "p90": 34,
+    "p95": 42,
+    "p99": 63
+  },
+  "language_distribution": {
+    "english_column": {
+      "english_like": 96371,
+      "uncertain": 12091,
+      "unknown": 208,
+      "swahili_like": 27
+    },
+    "swahili_column": {
+      "swahili_like": 97503,
+      "uncertain": 10112,
+      "english_like": 880,
+      "unknown": 202
+    }
+  },
+  "subject_distribution": {
+    "general_or_unknown": 96129,
+    "biology": 2373,
+    "technology_computing": 3596,
+    "mathematics": 2830,
+    "chemistry": 754,
+    "physics": 3015
+  },
+  "source_distribution": {
+    "ELRC-wikipedia_health.en-sw": 607,
+    "GlobalVoices.en-sw": 30782,
+    "TED2020.en-sw": 9634,
+    "WikiMatrix.en-sw": 51386,
+    "wikimedia.en-sw": 16288
+  }
+}

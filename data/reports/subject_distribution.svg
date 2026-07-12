@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="284">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="34" font-family="Arial" font-size="22" font-weight="700">Subject Distribution</text>
+<text x="24" y="84" font-family="Arial" font-size="14">general_or_unknown</text>
+<rect x="220" y="66" width="560" height="22" fill="#2f80ed"/>
+<text x="788" y="83" font-family="Arial" font-size="13">96129</text>
+<text x="24" y="118" font-family="Arial" font-size="14">technology_computing</text>
+<rect x="220" y="100" width="20" height="22" fill="#2f80ed"/>
+<text x="248" y="117" font-family="Arial" font-size="13">3596</text>
+<text x="24" y="152" font-family="Arial" font-size="14">physics</text>
+<rect x="220" y="134" width="17" height="22" fill="#2f80ed"/>
+<text x="245" y="151" font-family="Arial" font-size="13">3015</text>
+<text x="24" y="186" font-family="Arial" font-size="14">mathematics</text>
+<rect x="220" y="168" width="16" height="22" fill="#2f80ed"/>
+<text x="244" y="185" font-family="Arial" font-size="13">2830</text>
+<text x="24" y="220" font-family="Arial" font-size="14">biology</text>
+<rect x="220" y="202" width="13" height="22" fill="#2f80ed"/>
+<text x="241" y="219" font-family="Arial" font-size="13">2373</text>
+<text x="24" y="254" font-family="Arial" font-size="14">chemistry</text>
+<rect x="220" y="236" width="4" height="22" fill="#2f80ed"/>
+<text x="232" y="253" font-family="Arial" font-size="13">754</text>
+</svg>

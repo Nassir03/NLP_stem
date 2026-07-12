@@ -5,6 +5,8 @@ import inspect
 import os
 from pathlib import Path
 
+from hf_utils import auth_kwargs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "splits"
@@ -68,8 +70,8 @@ def main() -> None:
 
     args = parse_args()
     dataset = load_dataset("csv", data_files={"train": str(args.train_file), "validation": str(args.validation_file)})
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, **auth_kwargs())
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, **auth_kwargs())
 
     def tokenize_batch(batch):
         # ByT5 uses UTF-8 bytes internally, which is useful for noisy text.

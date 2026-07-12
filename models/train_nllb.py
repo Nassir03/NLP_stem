@@ -5,6 +5,8 @@ import inspect
 import os
 from pathlib import Path
 
+from hf_utils import auth_kwargs, restrict_to_single_gpu
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "splits"
@@ -38,6 +40,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-validation-samples", type=int, default=None)
+    parser.add_argument(
+        "--allow-multi-gpu",
+        action="store_true",
+        help=(
+            "Allow Transformers Trainer to use every visible GPU. Disabled by default "
+            "because Kaggle dual-GPU DataParallel can crash NLLB training."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -58,6 +68,10 @@ def trainer_tokenizer_kwargs(trainer_class, tokenizer) -> dict[str, object]:
 
 
 def main() -> None:
+    args = parse_args()
+    if not args.allow_multi_gpu:
+        restrict_to_single_gpu()
+
     require_libraries()
 
     from datasets import load_dataset
@@ -70,7 +84,6 @@ def main() -> None:
         Seq2SeqTrainingArguments,
     )
 
-    args = parse_args()
     dataset = load_dataset(
         "csv",
         data_files={
@@ -78,8 +91,13 @@ def main() -> None:
             "validation": str(args.validation_file),
         },
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, src_lang="eng_Latn", tgt_lang="swh_Latn")
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name,
+        src_lang="eng_Latn",
+        tgt_lang="swh_Latn",
+        **auth_kwargs(),
+    )
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, **auth_kwargs())
 
     def tokenize_batch(batch):
         # NLLB uses language IDs, so Swahili is forced during generation/evaluation.
@@ -120,10 +138,12 @@ def main() -> None:
         label_smoothing_factor=0.1,
         predict_with_generate=True,
         generation_num_beams=5,
+        generation_max_length=args.max_target_length,
         save_total_limit=2,
         logging_steps=100,
         fp16=use_fp16,
         gradient_checkpointing=True,
+        warmup_steps=0,
         **strategy_kwargs(Seq2SeqTrainingArguments),
     )
     trainer = Seq2SeqTrainer(

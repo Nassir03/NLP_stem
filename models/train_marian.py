@@ -5,6 +5,8 @@ import inspect
 import os
 from pathlib import Path
 
+from hf_utils import auth_kwargs
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "splits"
@@ -78,8 +80,8 @@ def main() -> None:
             "validation": str(args.validation_file),
         },
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, **auth_kwargs())
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, **auth_kwargs())
 
     def tokenize_batch(batch):
         # Marian expects plain source text and target text.

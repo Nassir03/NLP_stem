@@ -5,7 +5,7 @@ import inspect
 import os
 from pathlib import Path
 
-from hf_utils import auth_kwargs
+from hf_utils import auth_kwargs, restrict_to_single_gpu
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-validation-samples", type=int, default=None)
+    parser.add_argument("--allow-multi-gpu", action="store_true")
     return parser.parse_args()
 
 
@@ -61,6 +62,10 @@ def trainer_tokenizer_kwargs(trainer_class, tokenizer) -> dict[str, object]:
 
 
 def main() -> None:
+    args = parse_args()
+    if not args.allow_multi_gpu:
+        restrict_to_single_gpu()
+
     require_libraries()
 
     from datasets import load_dataset
@@ -72,7 +77,6 @@ def main() -> None:
         Seq2SeqTrainingArguments,
     )
 
-    args = parse_args()
     dataset = load_dataset(
         "csv",
         data_files={

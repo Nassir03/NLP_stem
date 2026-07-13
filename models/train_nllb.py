@@ -19,6 +19,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 def require_libraries() -> None:
     try:
         import datasets  # noqa: F401
+        import sacrebleu  # noqa: F401
         import transformers  # noqa: F401
     except ImportError as exc:
         raise SystemExit(
@@ -75,8 +76,11 @@ def main() -> None:
     require_libraries()
 
     from datasets import load_dataset
+    import numpy as np
+    import sacrebleu
     import torch
     from transformers import (
+        AutoConfig,
         AutoModelForSeq2SeqLM,
         AutoTokenizer,
         DataCollatorForSeq2Seq,
@@ -97,7 +101,9 @@ def main() -> None:
         tgt_lang="swh_Latn",
         **auth_kwargs(),
     )
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, **auth_kwargs())
+    config = AutoConfig.from_pretrained(args.model_name, **auth_kwargs())
+    config.tie_word_embeddings = False
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, config=config, **auth_kwargs())
 
     def tokenize_batch(batch):
         # NLLB uses language IDs, so Swahili is forced during generation/evaluation.
@@ -126,6 +132,18 @@ def main() -> None:
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = False
 
+    def compute_metrics(eval_preds):
+        predictions, labels = eval_preds
+        if isinstance(predictions, tuple):
+            predictions = predictions[0]
+        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        decoded_predictions = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        decoded_predictions = [text.strip() for text in decoded_predictions]
+        decoded_labels = [text.strip() for text in decoded_labels]
+        bleu = sacrebleu.corpus_bleu(decoded_predictions, [decoded_labels]).score
+        return {"bleu": round(bleu, 4)}
+
     training_args = Seq2SeqTrainingArguments(
         output_dir=str(args.output_dir),
         learning_rate=args.learning_rate,
@@ -134,7 +152,7 @@ def main() -> None:
         per_device_eval_batch_size=args.batch_size * 2,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         weight_decay=0.01,
-        warmup_ratio=0.05,
+        warmup_steps=0,
         label_smoothing_factor=0.1,
         predict_with_generate=True,
         generation_num_beams=5,
@@ -143,7 +161,11 @@ def main() -> None:
         logging_steps=100,
         fp16=use_fp16,
         gradient_checkpointing=True,
-        warmup_steps=0,
+        load_best_model_at_end=True,
+        metric_for_best_model="bleu",
+        greater_is_better=True,
+        seed=42,
+        data_seed=42,
         **strategy_kwargs(Seq2SeqTrainingArguments),
     )
     trainer = Seq2SeqTrainer(
@@ -152,6 +174,7 @@ def main() -> None:
         train_dataset=tokenized["train"],
         eval_dataset=tokenized["validation"],
         data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
+        compute_metrics=compute_metrics,
         **trainer_tokenizer_kwargs(Seq2SeqTrainer, tokenizer),
     )
     trainer.train()

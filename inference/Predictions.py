@@ -13,6 +13,7 @@ DEFAULT_OUTPUT = ROOT / "outputs" / "predictions" / "predictions.csv"
 sys.path.append(str(ROOT / "models"))
 
 from hf_utils import auth_kwargs
+from translation_utils import chunk_text, translate_chunks
 
 
 def require_transformers() -> None:
@@ -33,13 +34,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-beams", type=int, default=5)
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-source-tokens", type=int, default=240)
+    parser.add_argument("--length-penalty", type=float, default=1.0)
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=3)
     return parser.parse_args()
-
-
-def source_texts(texts: list[str], model_type: str) -> list[str]:
-    if model_type in {"mt5", "byt5"}:
-        return [f"translate English to Swahili: {text}" for text in texts]
-    return texts
 
 
 def main() -> None:
@@ -63,36 +61,37 @@ def main() -> None:
         rows = rows[: args.max_rows]
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    generate_kwargs = {
-        "num_beams": args.num_beams,
-        "max_new_tokens": args.max_new_tokens,
-        "early_stopping": True,
-        "no_repeat_ngram_size": 3,
-    }
-    if args.model_type == "nllb":
-        generate_kwargs["forced_bos_token_id"] = tokenizer.convert_tokens_to_ids("swh_Latn")
-
     with args.output.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["english", "swahili", "prediction"])
         writer.writeheader()
 
-        for start in range(0, len(rows), args.batch_size):
-            batch = rows[start : start + args.batch_size]
-            texts = source_texts([row["english"] for row in batch], args.model_type)
-            inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=256).to(device)
+        for row in rows:
+            chunks = chunk_text(
+                row["english"],
+                tokenizer,
+                args.model_type,
+                max_source_tokens=args.max_source_tokens,
+            )
+            predictions = translate_chunks(
+                chunks=chunks,
+                tokenizer=tokenizer,
+                model=model,
+                model_type=args.model_type,
+                device=device,
+                batch_size=args.batch_size,
+                num_beams=args.num_beams,
+                max_new_tokens=args.max_new_tokens,
+                length_penalty=args.length_penalty,
+                no_repeat_ngram_size=args.no_repeat_ngram_size,
+            )
 
-            with torch.no_grad():
-                output_ids = model.generate(**inputs, **generate_kwargs)
-            predictions = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-
-            for row, prediction in zip(batch, predictions):
-                writer.writerow(
-                    {
-                        "english": row["english"],
-                        "swahili": row["swahili"],
-                        "prediction": prediction,
-                    }
-                )
+            writer.writerow(
+                {
+                    "english": row["english"],
+                    "swahili": row["swahili"],
+                    "prediction": " ".join(predictions),
+                }
+            )
 
     print(f"Wrote {len(rows)} predictions to {args.output.resolve()}")
 

@@ -10,6 +10,7 @@ DEFAULT_MODEL_DIR = ROOT / "outputs" / "checkpoints" / "nllb"
 sys.path.append(str(ROOT / "models"))
 
 from hf_utils import auth_kwargs
+from translation_utils import chunk_text, translate_chunks
 
 
 def require_transformers() -> None:
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-beams", type=int, default=5)
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--max-source-tokens", type=int, default=240)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--length-penalty", type=float, default=1.0)
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=3)
     return parser.parse_args()
 
 
@@ -50,23 +55,25 @@ def main() -> None:
     model.to(device)
     model.eval()
 
-    source_text = args.text
-    if args.model_type in {"mt5", "byt5"}:
-        source_text = f"translate English to Swahili: {source_text}"
-
-    inputs = tokenizer(source_text, return_tensors="pt", truncation=True, max_length=256).to(device)
-    generate_kwargs = {
-        "num_beams": args.num_beams,
-        "max_new_tokens": args.max_new_tokens,
-        "early_stopping": True,
-        "no_repeat_ngram_size": 3,
-    }
-    if args.model_type == "nllb":
-        generate_kwargs["forced_bos_token_id"] = tokenizer.convert_tokens_to_ids("swh_Latn")
-
-    with torch.no_grad():
-        output_ids = model.generate(**inputs, **generate_kwargs)
-    print(tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0])
+    chunks = chunk_text(
+        args.text,
+        tokenizer,
+        args.model_type,
+        max_source_tokens=args.max_source_tokens,
+    )
+    translations = translate_chunks(
+        chunks=chunks,
+        tokenizer=tokenizer,
+        model=model,
+        model_type=args.model_type,
+        device=device,
+        batch_size=args.batch_size,
+        num_beams=args.num_beams,
+        max_new_tokens=args.max_new_tokens,
+        length_penalty=args.length_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
+    )
+    print("\n\n".join(translations))
 
 
 if __name__ == "__main__":

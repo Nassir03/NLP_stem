@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import inspect
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ from hf_utils import auth_kwargs, restrict_to_single_gpu
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "splits"
 OUTPUT_DIR = ROOT / "outputs" / "checkpoints" / "nllb"
+REQUIRED_COLUMNS = {"english", "swahili"}
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -39,6 +41,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=float, default=3)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
+    parser.add_argument("--warmup-steps", type=int, default=500)
+    parser.add_argument("--num-beams", type=int, default=5)
+    parser.add_argument("--min-chars", type=int, default=2)
+    parser.add_argument("--max-length-ratio", type=float, default=4.0)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-validation-samples", type=int, default=None)
     parser.add_argument(
@@ -50,6 +56,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def validate_csv(path: Path) -> None:
+    if not path.exists():
+        raise SystemExit(f"Required split file not found: {path}")
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = set(reader.fieldnames or [])
+    missing = sorted(REQUIRED_COLUMNS - fieldnames)
+    if missing:
+        raise SystemExit(f"{path} is missing required column(s): {', '.join(missing)}")
 
 
 def strategy_kwargs(training_args_class) -> dict[str, str]:
@@ -88,6 +105,9 @@ def main() -> None:
         Seq2SeqTrainingArguments,
     )
 
+    validate_csv(args.train_file)
+    validate_csv(args.validation_file)
+
     dataset = load_dataset(
         "csv",
         data_files={
@@ -95,6 +115,20 @@ def main() -> None:
             "validation": str(args.validation_file),
         },
     )
+
+    def keep_clean_pair(row):
+        english = str(row["english"]).strip()
+        swahili = str(row["swahili"]).strip()
+        if len(english) < args.min_chars or len(swahili) < args.min_chars:
+            return False
+        if english.casefold() == swahili.casefold():
+            return False
+        shorter = max(min(len(english), len(swahili)), 1)
+        longer = max(len(english), len(swahili))
+        return longer / shorter <= args.max_length_ratio
+
+    dataset = dataset.filter(keep_clean_pair)
+
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
         src_lang="eng_Latn",
@@ -104,6 +138,9 @@ def main() -> None:
     config = AutoConfig.from_pretrained(args.model_name, **auth_kwargs())
     config.tie_word_embeddings = False
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, config=config, **auth_kwargs())
+    forced_bos_token_id = tokenizer.convert_tokens_to_ids("swh_Latn")
+    model.config.forced_bos_token_id = forced_bos_token_id
+    model.generation_config.forced_bos_token_id = forced_bos_token_id
 
     def tokenize_batch(batch):
         # NLLB uses language IDs, so Swahili is forced during generation/evaluation.
@@ -152,10 +189,10 @@ def main() -> None:
         per_device_eval_batch_size=args.batch_size * 2,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         weight_decay=0.01,
-        warmup_steps=0,
+        warmup_steps=args.warmup_steps,
         label_smoothing_factor=0.1,
         predict_with_generate=True,
-        generation_num_beams=5,
+        generation_num_beams=args.num_beams,
         generation_max_length=args.max_target_length,
         save_total_limit=2,
         logging_steps=100,

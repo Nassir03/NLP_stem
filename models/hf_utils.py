@@ -15,4 +15,4 @@ def auth_kwargs() -> dict[str, str]:
 
 def restrict_to_single_gpu() -> None:
     """Avoid Trainer DataParallel issues on Kaggle dual-GPU notebooks."""
-    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"

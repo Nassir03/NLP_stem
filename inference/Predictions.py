@@ -16,8 +16,23 @@ from hf_utils import auth_kwargs
 from translation_utils import chunk_text, translate_chunks
 
 
+def validate_model_dir(model_dir: Path) -> None:
+    if not model_dir.exists():
+        raise SystemExit(f"Model directory not found: {model_dir}. Train the model first.")
+    required_any = [
+        model_dir / "pytorch_model.bin",
+        model_dir / "model.safetensors",
+    ]
+    if not (model_dir / "config.json").exists() or not any(path.exists() for path in required_any):
+        raise SystemExit(
+            f"Incomplete checkpoint: {model_dir}. The previous training run likely failed before saving. "
+            "Delete this folder and train again."
+        )
+
+
 def require_transformers() -> None:
     try:
+        import sentencepiece  # noqa: F401
         import torch  # noqa: F401
         import transformers  # noqa: F401
     except ImportError as exc:
@@ -47,7 +62,8 @@ def main() -> None:
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
     args = parse_args()
-    tokenizer_kwargs = {"src_lang": "eng_Latn"} if args.model_type == "nllb" else {}
+    validate_model_dir(args.model_dir)
+    tokenizer_kwargs = {"src_lang": "eng_Latn", "use_fast": False} if args.model_type == "nllb" else {}
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, **tokenizer_kwargs, **auth_kwargs())
     model = AutoModelForSeq2SeqLM.from_pretrained(args.model_dir, **auth_kwargs())
 

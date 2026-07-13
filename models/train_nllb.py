@@ -22,6 +22,7 @@ def require_libraries() -> None:
     try:
         import datasets  # noqa: F401
         import sacrebleu  # noqa: F401
+        import sentencepiece  # noqa: F401
         import transformers  # noqa: F401
     except ImportError as exc:
         raise SystemExit(
@@ -97,7 +98,6 @@ def main() -> None:
     import sacrebleu
     import torch
     from transformers import (
-        AutoConfig,
         AutoModelForSeq2SeqLM,
         AutoTokenizer,
         DataCollatorForSeq2Seq,
@@ -133,11 +133,10 @@ def main() -> None:
         args.model_name,
         src_lang="eng_Latn",
         tgt_lang="swh_Latn",
+        use_fast=False,
         **auth_kwargs(),
     )
-    config = AutoConfig.from_pretrained(args.model_name, **auth_kwargs())
-    config.tie_word_embeddings = False
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, config=config, **auth_kwargs())
+    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, **auth_kwargs())
     forced_bos_token_id = tokenizer.convert_tokens_to_ids("swh_Latn")
     model.config.forced_bos_token_id = forced_bos_token_id
     model.generation_config.forced_bos_token_id = forced_bos_token_id
@@ -210,7 +209,7 @@ def main() -> None:
         args=training_args,
         train_dataset=tokenized["train"],
         eval_dataset=tokenized["validation"],
-        data_collator=DataCollatorForSeq2Seq(tokenizer, model=model),
+        data_collator=DataCollatorForSeq2Seq(tokenizer),
         compute_metrics=compute_metrics,
         **trainer_tokenizer_kwargs(Seq2SeqTrainer, tokenizer),
     )

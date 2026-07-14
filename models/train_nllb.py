@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import inspect
+import math
 import os
 from pathlib import Path
 
@@ -23,15 +23,16 @@ def require_libraries() -> None:
         import datasets  # noqa: F401
         import sacrebleu  # noqa: F401
         import sentencepiece  # noqa: F401
+        import torch  # noqa: F401
         import transformers  # noqa: F401
     except ImportError as exc:
         raise SystemExit(
-            "Install transformers, datasets, sentencepiece and sacrebleu before running NLLB training."
+            "Install torch, transformers, datasets, sentencepiece and sacrebleu before running NLLB training."
         ) from exc
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fine-tune facebook/nllb-200-distilled-600M.")
+    parser = argparse.ArgumentParser(description="Fine-tune facebook/nllb-200-distilled-600M safely on Kaggle.")
     parser.add_argument("--train-file", type=Path, default=DATA_DIR / "train.csv")
     parser.add_argument("--validation-file", type=Path, default=DATA_DIR / "validation.csv")
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
@@ -39,22 +40,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-source-length", type=int, default=256)
     parser.add_argument("--max-target-length", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=2e-5)
-    parser.add_argument("--epochs", type=float, default=3)
+    parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--num-beams", type=int, default=5)
-    parser.add_argument("--min-chars", type=int, default=2)
-    parser.add_argument("--max-length-ratio", type=float, default=4.0)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-validation-samples", type=int, default=None)
+    parser.add_argument("--min-chars", type=int, default=2)
+    parser.add_argument("--max-length-ratio", type=float, default=4.0)
+    parser.add_argument("--logging-steps", type=int, default=100)
+    parser.add_argument("--bleu-samples", type=int, default=500)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--fp16", action="store_true", help="Use CUDA mixed precision. Keep off if Kaggle is unstable.")
     parser.add_argument(
         "--allow-multi-gpu",
         action="store_true",
-        help=(
-            "Allow Transformers Trainer to use every visible GPU. Disabled by default "
-            "because Kaggle dual-GPU DataParallel can crash NLLB training."
-        ),
+        help="Disabled by default because Kaggle dual-GPU setups have repeatedly crashed NLLB training.",
     )
     return parser.parse_args()
 
@@ -70,22 +72,6 @@ def validate_csv(path: Path) -> None:
         raise SystemExit(f"{path} is missing required column(s): {', '.join(missing)}")
 
 
-def strategy_kwargs(training_args_class) -> dict[str, str]:
-    """Support both old and new Transformers argument names."""
-    parameters = inspect.signature(training_args_class.__init__).parameters
-    if "eval_strategy" in parameters:
-        return {"eval_strategy": "epoch", "save_strategy": "epoch"}
-    return {"evaluation_strategy": "epoch", "save_strategy": "epoch"}
-
-
-def trainer_tokenizer_kwargs(trainer_class, tokenizer) -> dict[str, object]:
-    """Support Transformers versions before and after tokenizer was renamed."""
-    parameters = inspect.signature(trainer_class.__init__).parameters
-    if "processing_class" in parameters:
-        return {"processing_class": tokenizer}
-    return {"tokenizer": tokenizer}
-
-
 def main() -> None:
     args = parse_args()
     if not args.allow_multi_gpu:
@@ -94,26 +80,22 @@ def main() -> None:
     require_libraries()
 
     from datasets import load_dataset
-    import numpy as np
     import sacrebleu
     import torch
-    from transformers import (
-        AutoModelForSeq2SeqLM,
-        AutoTokenizer,
-        DataCollatorForSeq2Seq,
-        Seq2SeqTrainer,
-        Seq2SeqTrainingArguments,
-    )
+    from torch.nn.utils import clip_grad_norm_
+    from torch.utils.data import DataLoader
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, get_linear_schedule_with_warmup
+
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     validate_csv(args.train_file)
     validate_csv(args.validation_file)
 
     dataset = load_dataset(
         "csv",
-        data_files={
-            "train": str(args.train_file),
-            "validation": str(args.validation_file),
-        },
+        data_files={"train": str(args.train_file), "validation": str(args.validation_file)},
     )
 
     def keep_clean_pair(row):
@@ -128,6 +110,12 @@ def main() -> None:
         return longer / shorter <= args.max_length_ratio
 
     dataset = dataset.filter(keep_clean_pair)
+    if args.max_train_samples:
+        dataset["train"] = dataset["train"].select(range(min(args.max_train_samples, len(dataset["train"]))))
+    if args.max_validation_samples:
+        dataset["validation"] = dataset["validation"].select(
+            range(min(args.max_validation_samples, len(dataset["validation"])))
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name,
@@ -140,82 +128,149 @@ def main() -> None:
     forced_bos_token_id = tokenizer.convert_tokens_to_ids("swh_Latn")
     model.config.forced_bos_token_id = forced_bos_token_id
     model.generation_config.forced_bos_token_id = forced_bos_token_id
+    if hasattr(model.config, "use_cache"):
+        model.config.use_cache = False
 
     def tokenize_batch(batch):
-        # NLLB uses language IDs, so Swahili is forced during generation/evaluation.
-        inputs = tokenizer(
-            batch["english"],
-            max_length=args.max_source_length,
-            truncation=True,
-        )
-        labels = tokenizer(
-            text_target=batch["swahili"],
-            max_length=args.max_target_length,
-            truncation=True,
-        )
+        inputs = tokenizer(batch["english"], max_length=args.max_source_length, truncation=True)
+        labels = tokenizer(text_target=batch["swahili"], max_length=args.max_target_length, truncation=True)
         inputs["labels"] = labels["input_ids"]
         return inputs
 
     tokenized = dataset.map(tokenize_batch, batched=True, remove_columns=dataset["train"].column_names)
-    if args.max_train_samples:
-        tokenized["train"] = tokenized["train"].select(range(min(args.max_train_samples, len(tokenized["train"]))))
-    if args.max_validation_samples:
-        tokenized["validation"] = tokenized["validation"].select(
-            range(min(args.max_validation_samples, len(tokenized["validation"])))
+
+    def collate(features):
+        model_inputs = tokenizer.pad(
+            {
+                "input_ids": [feature["input_ids"] for feature in features],
+                "attention_mask": [feature["attention_mask"] for feature in features],
+            },
+            return_tensors="pt",
         )
+        labels = tokenizer.pad(
+            {"input_ids": [feature["labels"] for feature in features]},
+            return_tensors="pt",
+        )["input_ids"]
+        labels[labels == tokenizer.pad_token_id] = -100
+        model_inputs["labels"] = labels
+        return model_inputs
 
-    use_fp16 = torch.cuda.is_available()
-    if hasattr(model.config, "use_cache"):
-        model.config.use_cache = False
-
-    def compute_metrics(eval_preds):
-        predictions, labels = eval_preds
-        if isinstance(predictions, tuple):
-            predictions = predictions[0]
-        labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
-        decoded_predictions = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
-        decoded_predictions = [text.strip() for text in decoded_predictions]
-        decoded_labels = [text.strip() for text in decoded_labels]
-        bleu = sacrebleu.corpus_bleu(decoded_predictions, [decoded_labels]).score
-        return {"bleu": round(bleu, 4)}
-
-    training_args = Seq2SeqTrainingArguments(
-        output_dir=str(args.output_dir),
-        learning_rate=args.learning_rate,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size * 2,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        weight_decay=0.01,
-        warmup_steps=args.warmup_steps,
-        label_smoothing_factor=0.1,
-        predict_with_generate=True,
-        generation_num_beams=args.num_beams,
-        generation_max_length=args.max_target_length,
-        save_total_limit=2,
-        logging_steps=100,
-        fp16=use_fp16,
-        gradient_checkpointing=True,
-        load_best_model_at_end=True,
-        metric_for_best_model="bleu",
-        greater_is_better=True,
-        seed=42,
-        data_seed=42,
-        **strategy_kwargs(Seq2SeqTrainingArguments),
+    generator = torch.Generator()
+    generator.manual_seed(args.seed)
+    train_loader = DataLoader(
+        tokenized["train"],
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate,
+        generator=generator,
     )
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized["train"],
-        eval_dataset=tokenized["validation"],
-        data_collator=DataCollatorForSeq2Seq(tokenizer),
-        compute_metrics=compute_metrics,
-        **trainer_tokenizer_kwargs(Seq2SeqTrainer, tokenizer),
+    validation_loader = DataLoader(
+        tokenized["validation"],
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate,
     )
-    trainer.train()
-    trainer.save_model(str(args.output_dir))
-    tokenizer.save_pretrained(str(args.output_dir))
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
+    optimizer_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
+    total_optimizer_steps = max(optimizer_steps_per_epoch * args.epochs, 1)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=min(args.warmup_steps, max(total_optimizer_steps - 1, 0)),
+        num_training_steps=total_optimizer_steps,
+    )
+    scaler = torch.cuda.amp.GradScaler(enabled=args.fp16 and device.type == "cuda")
+
+    def evaluate_loss() -> float:
+        model.eval()
+        total_loss = 0.0
+        total_batches = 0
+        with torch.no_grad():
+            for batch in validation_loader:
+                batch = {key: value.to(device) for key, value in batch.items()}
+                outputs = model(**batch)
+                total_loss += float(outputs.loss.detach().cpu())
+                total_batches += 1
+        return total_loss / max(total_batches, 1)
+
+    def evaluate_bleu() -> float:
+        if args.bleu_samples <= 0:
+            return 0.0
+        model.eval()
+        predictions: list[str] = []
+        references: list[str] = []
+        sample_count = min(args.bleu_samples, len(dataset["validation"]))
+        for start in range(0, sample_count, args.batch_size):
+            rows = dataset["validation"][start : min(start + args.batch_size, sample_count)]
+            source_texts = rows["english"]
+            target_texts = rows["swahili"]
+            inputs = tokenizer(
+                source_texts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=args.max_source_length,
+            ).to(device)
+            with torch.no_grad():
+                output_ids = model.generate(
+                    **inputs,
+                    forced_bos_token_id=forced_bos_token_id,
+                    num_beams=args.num_beams,
+                    max_new_tokens=args.max_target_length,
+                    no_repeat_ngram_size=3,
+                    early_stopping=True,
+                )
+            predictions.extend(text.strip() for text in tokenizer.batch_decode(output_ids, skip_special_tokens=True))
+            references.extend(text.strip() for text in target_texts)
+        return round(sacrebleu.corpus_bleu(predictions, [references]).score, 4)
+
+    best_bleu = -1.0
+    global_step = 0
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        running_loss = 0.0
+
+        for step, batch in enumerate(train_loader, start=1):
+            batch = {key: value.to(device) for key, value in batch.items()}
+            with torch.cuda.amp.autocast(enabled=args.fp16 and device.type == "cuda"):
+                outputs = model(**batch)
+                loss = outputs.loss / args.gradient_accumulation_steps
+
+            scaler.scale(loss).backward()
+            running_loss += float(loss.detach().cpu()) * args.gradient_accumulation_steps
+
+            if step % args.gradient_accumulation_steps == 0 or step == len(train_loader):
+                scaler.unscale_(optimizer)
+                clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
+                global_step += 1
+
+                if global_step % args.logging_steps == 0:
+                    average_loss = running_loss / max(args.logging_steps * args.gradient_accumulation_steps, 1)
+                    lr = scheduler.get_last_lr()[0]
+                    print(f"step={global_step} epoch={epoch} loss={average_loss:.4f} lr={lr:.3e}", flush=True)
+                    running_loss = 0.0
+
+        eval_loss = evaluate_loss()
+        bleu = evaluate_bleu()
+        print(f"epoch={epoch} eval_loss={eval_loss:.4f} bleu={bleu:.4f}", flush=True)
+
+        if bleu >= best_bleu:
+            best_bleu = bleu
+            model.save_pretrained(args.output_dir)
+            tokenizer.save_pretrained(args.output_dir)
+            print(f"Saved best checkpoint to {args.output_dir} with bleu={best_bleu:.4f}", flush=True)
+
+    print(f"Training complete. Best BLEU={best_bleu:.4f}. Checkpoint: {args.output_dir.resolve()}", flush=True)
 
 
 if __name__ == "__main__":

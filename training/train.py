@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import importlib
+import math
+import random
+from pathlib import Path
+
+import numpy as np
+import torch
+from torch import nn
+from tqdm import tqdm
+
+from config import CFG
+from preprocessing.dataset import get_loaders
+
+# Every model wrapper in models/ exposes the same build_model function.  Keeping
+# this registry here lets training, inference, and evaluation agree on names.
+MODEL_MODULES = {
+    "rnn": "models.rnn_seq2seq",
+    "rnn_seq2seq": "models.rnn_seq2seq",
+    "gru": "models.gru_seq2seq",
+    "gru_seq2seq": "models.gru_seq2seq",
+    "lstm": "models.lstm_seq2seq",
+    "lstm_seq2seq": "models.lstm_seq2seq",
+    "gru_attention": "models.gru_attention",
+    "lstm_attention": "models.lstm_attention",
+    "transformer": "models.transformer",
+}
+
+
+def set_seed(seed: int) -> None:
+    """Make training runs repeatable across Python, NumPy, and PyTorch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def build_model(model_name: str, src_vocab: int, tgt_vocab: int) -> nn.Module:
+    if model_name not in MODEL_MODULES:
+        valid = ", ".join(sorted(MODEL_MODULES))
+        raise ValueError(f"Unknown model '{model_name}'. Choose one of: {valid}")
+    module = importlib.import_module(MODEL_MODULES[model_name])
+    return module.build_model(
+        src_vocab,
+        tgt_vocab,
+        CFG.embedding_dim,
+        CFG.hidden_dim,
+        CFG.num_layers,
+        CFG.dropout,
+    )
+
+
+def batch_loss(model: nn.Module, model_name: str, src: torch.Tensor, tgt: torch.Tensor,
+               criterion: nn.Module, teacher_forcing: float) -> torch.Tensor:
+    """Compute next-token loss for both Transformer and recurrent models."""
+    if model_name == "transformer":
+        logits = model(src, tgt[:, :-1])
+        gold = tgt[:, 1:]
+    else:
+        logits = model(src, tgt, teacher_forcing)
+        gold = tgt[:, 1:]
+    return criterion(logits.reshape(-1, logits.size(-1)), gold.reshape(-1))
+
+
+def run_epoch(model: nn.Module, model_name: str, loader, criterion: nn.Module,
+              optimizer: torch.optim.Optimizer | None = None) -> float:
+    training = optimizer is not None
+    model.train(training)
+    total_loss = 0.0
+    total_tokens = 0
+
+    for src, tgt in tqdm(loader, leave=False, desc="train" if training else "valid"):
+        src = src.to(CFG.device)
+        tgt = tgt.to(CFG.device)
+        if training:
+            optimizer.zero_grad(set_to_none=True)
+
+        with torch.set_grad_enabled(training):
+            loss = batch_loss(
+                model,
+                model_name,
+                src,
+                tgt,
+                criterion,
+                CFG.teacher_forcing if training else 0.0,
+            )
+            if training:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+
+        tokens = int(tgt[:, 1:].ne(criterion.ignore_index).sum().item())
+        total_loss += float(loss.item()) * max(tokens, 1)
+        total_tokens += max(tokens, 1)
+
+    return total_loss / max(total_tokens, 1)
+
+
+def write_history(path: Path, rows: list[dict[str, float | int]]) -> None:
+    """Persist a small CSV that can be plotted without loading checkpoints."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "valid_loss", "valid_ppl"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def train(model_name: str) -> Path:
+    set_seed(CFG.seed)
+    CFG.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    CFG.results_dir.mkdir(parents=True, exist_ok=True)
+
+    loaders, src_tok, tgt_tok = get_loaders()
+    model = build_model(model_name, src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
+    criterion = nn.CrossEntropyLoss(ignore_index=tgt_tok.pad_id)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.learning_rate)
+
+    best_loss = math.inf
+    best_path = CFG.checkpoint_dir / f"{model_name}_best.pt"
+    stale_epochs = 0
+    history: list[dict[str, float | int]] = []
+
+    for epoch in range(1, CFG.epochs + 1):
+        train_loss = run_epoch(model, model_name, loaders["train"], criterion, optimizer)
+        valid_loss = run_epoch(model, model_name, loaders["validation"], criterion)
+        valid_ppl = math.exp(min(valid_loss, 20.0))
+        history.append({
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "valid_loss": valid_loss,
+            "valid_ppl": valid_ppl,
+        })
+        print(
+            f"epoch={epoch} train_loss={train_loss:.4f} "
+            f"valid_loss={valid_loss:.4f} valid_ppl={valid_ppl:.2f}"
+        )
+
+        if valid_loss < best_loss:
+            best_loss = valid_loss
+            stale_epochs = 0
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "model_name": model_name,
+                    "src_vocab": src_tok.vocab_size,
+                    "tgt_vocab": tgt_tok.vocab_size,
+                    "config": CFG.__dict__,
+                    "valid_loss": valid_loss,
+                },
+                best_path,
+            )
+        else:
+            stale_epochs += 1
+            if stale_epochs >= CFG.patience:
+                print(f"Early stopping after {CFG.patience} epochs without validation improvement.")
+                break
+
+    write_history(CFG.results_dir / f"{model_name}_training_history.csv", history)
+    print(f"Best checkpoint: {best_path}")
+    return best_path
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="gru_attention", choices=sorted(MODEL_MODULES))
+    args = parser.parse_args()
+    train(args.model)

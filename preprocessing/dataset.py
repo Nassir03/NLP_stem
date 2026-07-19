@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
-from config import CFG
+from config import CFG, ensure_runtime_defaults
 from kaggle_utils import sync_readonly_artifacts
 from preprocessing.tokenizer import load_tokenizers
 
@@ -35,6 +35,7 @@ def make_collate(src_pad, tgt_pad):
 
 def get_loaders():
     """Build train/validation/test loaders from prepared split CSV files."""
+    ensure_runtime_defaults()
     sync_readonly_artifacts()
     src_tok, tgt_tok = load_tokenizers()
     collate = make_collate(src_tok.pad_id, tgt_tok.pad_id)

@@ -82,6 +82,16 @@ class Config:
         self.checkpoint_dir = self.artifact_root / "checkpoints"
         self.results_dir = self.artifact_root / "results"
 
+    def __getattr__(self, name: str):
+        """Return safe defaults for optional runtime fields used by older files.
+
+        This protects Kaggle sessions where one file was refreshed but another
+        stale module still tries to access fields like CFG.test_limit directly.
+        """
+        if name in {"train_limit", "valid_limit", "test_limit"}:
+            return None
+        raise AttributeError(f"{type(self).__name__!s} object has no attribute {name!r}")
+
 CFG = Config()
 
 

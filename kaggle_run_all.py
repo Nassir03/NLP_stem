@@ -6,6 +6,8 @@ import sys
 
 from main import NEURAL_MODELS
 
+RUNNER_VERSION = "2026-07-19-kaggle-safe-config"
+
 
 def run(*args: str) -> None:
     """Run one project command and stop immediately if it fails."""
@@ -15,6 +17,7 @@ def run(*args: str) -> None:
 
 def run_pipeline(args: argparse.Namespace) -> None:
     """Execute the complete Kaggle workflow in the correct project order."""
+    print(f"[kaggle_run_all] version={RUNNER_VERSION}", flush=True)
     if not args.skip_prepare:
         run("main.py", "prepare")
     if not args.skip_tokenize:

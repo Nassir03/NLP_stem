@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import sentencepiece as spm
 from config import CFG
+from kaggle_utils import sync_readonly_artifacts
 
 SPECIALS = ["<pad>", "<unk>", "<bos>", "<eos>"]
 TOKEN_RE = re.compile(r"\w+|[^\w\s]", flags=re.UNICODE)
@@ -75,6 +76,8 @@ class SentencePieceTokenizer:
         return self.sp.decode(clean)
 
 def train_tokenizers():
+    """Train source and target tokenizers from the prepared training split."""
+    sync_readonly_artifacts()
     df = pd.read_csv(CFG.split_dir / "train.csv")
     CFG.tokenizer_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,6 +104,8 @@ def train_tokenizers():
     print("Tokenizers trained.")
 
 def load_tokenizers():
+    """Load tokenizers, copying read-only Kaggle artifacts when necessary."""
+    sync_readonly_artifacts()
     if CFG.tokenizer_type == "word":
         return (
             WordTokenizer.load(CFG.tokenizer_dir / "source_word.json"),

@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+
+from main import NEURAL_MODELS
+
+
+def run(*args: str) -> None:
+    """Run one project command and stop immediately if it fails."""
+    print("$", sys.executable, *args, flush=True)
+    subprocess.run([sys.executable, *args], check=True)
+
+
+def run_pipeline(args: argparse.Namespace) -> None:
+    """Execute the complete Kaggle workflow in the correct project order."""
+    if not args.skip_prepare:
+        run("main.py", "prepare")
+    if not args.skip_tokenize:
+        run("main.py", "tokenize")
+
+    run("main.py", "preprocess_eval")
+    run("main.py", "check")
+
+    if args.run_smt:
+        smt_train = ["main.py", "smt_train", "--iterations", str(args.smt_iterations)]
+        if args.smt_limit:
+            smt_train += ["--limit", str(args.smt_limit)]
+        run(*smt_train)
+
+        smt_generate = ["main.py", "smt_generate"]
+        if args.eval_limit:
+            smt_generate += ["--limit", str(args.eval_limit)]
+        run(*smt_generate)
+        run("main.py", "smt_eval")
+
+    models = args.models or NEURAL_MODELS
+    for model in models:
+        train_cmd = ["main.py", "train", "--model", model]
+        if args.epochs:
+            train_cmd += ["--epochs", str(args.epochs)]
+        if args.batch_size:
+            train_cmd += ["--batch-size", str(args.batch_size)]
+        if args.train_limit:
+            train_cmd += ["--train-limit", str(args.train_limit)]
+        if args.valid_limit:
+            train_cmd += ["--valid-limit", str(args.valid_limit)]
+        if args.skip_existing:
+            train_cmd += ["--skip-existing"]
+        run(*train_cmd)
+
+        eval_cmd = ["main.py", "generate_eval", "--model", model]
+        if args.eval_limit:
+            eval_cmd += ["--limit", str(args.eval_limit)]
+        run(*eval_cmd)
+
+    run("-m", "evaluation.summarize_results")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Kaggle-friendly full runner for SMT and all neural MT models."
+    )
+    parser.add_argument("--skip-prepare", action="store_true", help="Reuse existing split CSV files.")
+    parser.add_argument("--skip-tokenize", action="store_true", help="Reuse existing tokenizer models.")
+    parser.add_argument("--no-smt", dest="run_smt", action="store_false", help="Skip SMT baseline.")
+    parser.add_argument("--smt-iterations", type=int, default=5)
+    parser.add_argument("--smt-limit", type=int, default=50000)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--train-limit", type=int, default=None)
+    parser.add_argument("--valid-limit", type=int, default=None)
+    parser.add_argument("--eval-limit", type=int, default=None)
+    parser.add_argument("--skip-existing", action="store_true", help="Reuse existing neural checkpoints.")
+    parser.add_argument("--models", nargs="+", choices=NEURAL_MODELS)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Fast Kaggle smoke test: tiny data limits and one epoch.",
+    )
+    args = parser.parse_args()
+
+    if args.quick:
+        args.epochs = args.epochs or 1
+        args.batch_size = args.batch_size or 16
+        args.train_limit = args.train_limit or 128
+        args.valid_limit = args.valid_limit or 64
+        args.eval_limit = args.eval_limit or 32
+        args.smt_limit = min(args.smt_limit, 1000)
+
+    return args
+
+
+if __name__ == "__main__":
+    run_pipeline(parse_args())

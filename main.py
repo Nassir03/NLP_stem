@@ -3,6 +3,17 @@ import argparse
 import subprocess
 import sys
 
+from config import CFG
+
+NEURAL_MODELS = [
+    "rnn_seq2seq",
+    "gru_seq2seq",
+    "lstm_seq2seq",
+    "gru_attention",
+    "lstm_attention",
+    "transformer",
+]
+
 def run(*args):
     """Run project stages as modules so imports resolve from the repository root."""
     print("$", sys.executable, *args)
@@ -20,8 +31,14 @@ def main():
             "tokenize",
             "preprocess_eval",
             "train",
+            "train_all",
             "evaluate",
             "generate_eval",
+            "generate_all",
+            "smt_train",
+            "smt_generate",
+            "smt_eval",
+            "summarize",
         ],
         help=(
             "`evaluate` scores an existing prediction CSV and does not generate "
@@ -30,6 +47,12 @@ def main():
     )
     p.add_argument("--model", default="gru_attention")
     p.add_argument("--limit", type=int)
+    p.add_argument("--epochs", type=int, help="Override epochs for neural training.")
+    p.add_argument("--batch-size", type=int, help="Override batch size for neural training.")
+    p.add_argument("--train-limit", type=int, help="Use only the first N train rows.")
+    p.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
+    p.add_argument("--skip-existing", action="store_true", help="Skip neural models with checkpoints.")
+    p.add_argument("--iterations", type=int, default=5, help="SMT EM iterations.")
     p.add_argument(
         "--predictions",
         help="CSV containing source, target, and prediction columns for non-generating evaluation.",
@@ -45,16 +68,69 @@ def main():
     elif args.stage == "preprocess_eval":
         run("-m", "preprocessing.evaluate_preprocess")
     elif args.stage == "train":
-        run("-m", "training.train", "--model", args.model)
+        cmd = ["-m", "training.train", "--model", args.model]
+        if args.epochs:
+            cmd += ["--epochs", str(args.epochs)]
+        if args.batch_size:
+            cmd += ["--batch-size", str(args.batch_size)]
+        if args.train_limit:
+            cmd += ["--train-limit", str(args.train_limit)]
+        if args.valid_limit:
+            cmd += ["--valid-limit", str(args.valid_limit)]
+        if args.skip_existing:
+            cmd += ["--skip-existing"]
+        run(*cmd)
+    elif args.stage == "train_all":
+        for model in NEURAL_MODELS:
+            cmd = ["-m", "training.train", "--model", model]
+            if args.epochs:
+                cmd += ["--epochs", str(args.epochs)]
+            if args.batch_size:
+                cmd += ["--batch-size", str(args.batch_size)]
+            if args.train_limit:
+                cmd += ["--train-limit", str(args.train_limit)]
+            if args.valid_limit:
+                cmd += ["--valid-limit", str(args.valid_limit)]
+            if args.skip_existing:
+                cmd += ["--skip-existing"]
+            run(*cmd)
     elif args.stage == "evaluate":
         cmd = ["-m", "evaluation.translation_metrics", "--model", args.model, "--no-generate"]
         if args.predictions:
             cmd += ["--predictions", args.predictions]
         run(*cmd)
-    else:
+    elif args.stage == "generate_eval":
         cmd = ["-m", "evaluation.translation_metrics", "--model", args.model, "--generate"]
         if args.limit: cmd += ["--limit", str(args.limit)]
         run(*cmd)
+    elif args.stage == "generate_all":
+        for model in NEURAL_MODELS:
+            cmd = ["-m", "evaluation.translation_metrics", "--model", model, "--generate"]
+            if args.limit:
+                cmd += ["--limit", str(args.limit)]
+            run(*cmd)
+    elif args.stage == "smt_train":
+        cmd = ["-m", "smt.em_alignment", "--iterations", str(args.iterations)]
+        if args.limit:
+            cmd += ["--limit", str(args.limit)]
+        run(*cmd)
+    elif args.stage == "smt_generate":
+        cmd = ["-m", "smt.decoder"]
+        if args.limit:
+            cmd += ["--limit", str(args.limit)]
+        run(*cmd)
+    elif args.stage == "smt_eval":
+        run(
+            "-m",
+            "evaluation.translation_metrics",
+            "--model",
+            "smt",
+            "--no-generate",
+            "--predictions",
+            str(CFG.results_dir / "smt_predictions.csv"),
+        )
+    else:
+        run("-m", "evaluation.summarize_results")
 
 if __name__ == "__main__":
     main()

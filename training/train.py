@@ -192,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, help="Override config batch size for this run.")
     parser.add_argument("--train-limit", type=int, help="Use only the first N training rows.")
     parser.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
+    parser.add_argument("--test-limit", type=int, help="Use only the first N test rows.")
     parser.add_argument("--skip-existing", action="store_true", help="Do not retrain if checkpoint exists.")
     args = parser.parse_args()
     if args.epochs:
@@ -202,4 +203,6 @@ if __name__ == "__main__":
         CFG.train_limit = args.train_limit
     if args.valid_limit:
         CFG.valid_limit = args.valid_limit
+    if args.test_limit:
+        CFG.test_limit = args.test_limit
     train(args.model, skip_existing=args.skip_existing)

@@ -46,6 +46,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             train_cmd += ["--train-limit", str(args.train_limit)]
         if args.valid_limit:
             train_cmd += ["--valid-limit", str(args.valid_limit)]
+        if args.test_limit:
+            train_cmd += ["--test-limit", str(args.test_limit)]
         if args.skip_existing:
             train_cmd += ["--skip-existing"]
         run(*train_cmd)
@@ -71,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--train-limit", type=int, default=None)
     parser.add_argument("--valid-limit", type=int, default=None)
+    parser.add_argument("--test-limit", type=int, default=None)
     parser.add_argument("--eval-limit", type=int, default=None)
     parser.add_argument("--skip-existing", action="store_true", help="Reuse existing neural checkpoints.")
     parser.add_argument("--models", nargs="+", choices=NEURAL_MODELS)
@@ -86,6 +89,7 @@ def parse_args() -> argparse.Namespace:
         args.batch_size = args.batch_size or 16
         args.train_limit = args.train_limit or 128
         args.valid_limit = args.valid_limit or 64
+        args.test_limit = args.test_limit or 64
         args.eval_limit = args.eval_limit or 32
         args.smt_limit = min(args.smt_limit, 1000)
 

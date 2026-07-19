@@ -5,6 +5,7 @@ from collections import defaultdict
 import pandas as pd
 from tqdm import trange
 from config import CFG
+from kaggle_utils import sync_readonly_artifacts
 
 def tokenize(s): return str(s).lower().split()
 
@@ -43,6 +44,8 @@ class IBM1:
         return links
 
     def save(self, path):
+        """Write the lexical table, creating the checkpoint directory on fresh systems."""
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(dict(self.t), f, ensure_ascii=False)
 
@@ -51,6 +54,7 @@ if __name__ == "__main__":
     p.add_argument("--iterations", type=int, default=5)
     p.add_argument("--limit", type=int, default=50000)
     args = p.parse_args()
+    sync_readonly_artifacts()
     df = pd.read_csv(CFG.split_dir / "train.csv").head(args.limit)
     pairs = list(zip(df.source, df.target))
     model = IBM1(); model.train(pairs, args.iterations)

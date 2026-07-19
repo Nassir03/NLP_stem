@@ -39,10 +39,12 @@ def get_loaders():
     src_tok, tgt_tok = load_tokenizers()
     collate = make_collate(src_tok.pad_id, tgt_tok.pad_id)
     loaders = {}
+    # getattr keeps Kaggle runs compatible with older Config objects that were
+    # copied before test_limit existed.
     limits = {
-        "train": CFG.train_limit,
-        "validation": CFG.valid_limit,
-        "test": CFG.test_limit,
+        "train": getattr(CFG, "train_limit", None),
+        "validation": getattr(CFG, "valid_limit", None),
+        "test": getattr(CFG, "test_limit", None),
     }
     for name, shuffle in [("train", True), ("validation", False), ("test", False)]:
         ds = TranslationDataset(CFG.split_dir / f"{name}.csv", src_tok, tgt_tok, limits[name])

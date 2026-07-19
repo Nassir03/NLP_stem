@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 
 from config import CFG
+from kaggle_utils import sync_readonly_artifacts
 from preprocessing.tokenizer import load_tokenizers
 from training.train import MODEL_MODULES, build_model
 
@@ -74,6 +75,7 @@ def check_default_forward(src_tok, tgt_tok) -> None:
 
 def check_project() -> None:
     """Project-level smoke test that does not train models or generate translations."""
+    sync_readonly_artifacts()
     check_splits()
     src_tok, tgt_tok = check_tokenizers()
     check_model_registry(src_tok.vocab_size, tgt_tok.vocab_size)

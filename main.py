@@ -5,6 +5,8 @@ import sys
 
 from config import CFG
 
+PROJECT_VERSION = "2026-07-19-kaggle-safe-config"
+
 NEURAL_MODELS = [
     "rnn_seq2seq",
     "gru_seq2seq",
@@ -20,6 +22,7 @@ def run(*args):
     subprocess.run([sys.executable, *args], check=True)
 
 def main():
+    print(f"[NLP_stem] version={PROJECT_VERSION}")
     p = argparse.ArgumentParser(
         description="Run the English-Swahili machine translation project stages."
     )

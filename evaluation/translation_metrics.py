@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 import sacrebleu
 from config import CFG
+from kaggle_utils import sync_readonly_artifacts
 from preprocessing.tokenizer import load_tokenizers
 from inference.decode import load_model, greedy_decode
 
@@ -19,6 +20,7 @@ def corpus_metrics(references, hypotheses):
 
 def evaluate_predictions(prediction_csv, model_name=None):
     """Score an existing CSV; this path never calls the decoder or writes predictions."""
+    sync_readonly_artifacts()
     path = Path(prediction_csv)
     if not path.exists():
         raise FileNotFoundError(
@@ -41,6 +43,8 @@ def evaluate_predictions(prediction_csv, model_name=None):
 
 def generate_and_evaluate(model_name, limit=None):
     """Explicit generation path for experiments that need fresh model predictions."""
+    sync_readonly_artifacts()
+    CFG.results_dir.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(CFG.split_dir / "test.csv")
     if limit: df = df.head(limit)
     src_tok, tgt_tok = load_tokenizers()

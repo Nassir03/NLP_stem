@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from tqdm import tqdm
 
-from config import CFG
+from config import CFG, ensure_runtime_defaults
 from preprocessing.dataset import get_loaders
 
 # Every model wrapper in models/ exposes the same build_model function.  Keeping
@@ -128,6 +128,7 @@ def checkpoint_config() -> dict[str, str | int | float | None]:
 
 def train(model_name: str, skip_existing: bool = False) -> Path:
     """Train one model and save the best validation checkpoint."""
+    ensure_runtime_defaults()
     set_seed(CFG.seed)
     CFG.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     CFG.results_dir.mkdir(parents=True, exist_ok=True)

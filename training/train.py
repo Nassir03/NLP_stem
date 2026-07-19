@@ -29,6 +29,15 @@ MODEL_MODULES = {
     "transformer": "models.transformer",
 }
 
+TRAINABLE_MODELS = [
+    "rnn_seq2seq",
+    "gru_seq2seq",
+    "lstm_seq2seq",
+    "gru_attention",
+    "lstm_attention",
+    "transformer",
+]
+
 
 def set_seed(seed: int) -> None:
     """Make training runs repeatable across Python, NumPy, and PyTorch."""
@@ -109,7 +118,16 @@ def write_history(path: Path, rows: list[dict[str, float | int]]) -> None:
         writer.writerows(rows)
 
 
-def train(model_name: str) -> Path:
+def checkpoint_config() -> dict[str, str | int | float | None]:
+    """Store a portable config snapshot without OS-specific Path objects."""
+    return {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in CFG.__dict__.items()
+    }
+
+
+def train(model_name: str, skip_existing: bool = False) -> Path:
+    """Train one model and save the best validation checkpoint."""
     set_seed(CFG.seed)
     CFG.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     CFG.results_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +139,9 @@ def train(model_name: str) -> Path:
 
     best_loss = math.inf
     best_path = CFG.checkpoint_dir / f"{model_name}_best.pt"
+    if skip_existing and best_path.exists():
+        print(f"Skipping {model_name}; checkpoint already exists: {best_path}")
+        return best_path
     stale_epochs = 0
     history: list[dict[str, float | int]] = []
 
@@ -148,7 +169,7 @@ def train(model_name: str) -> Path:
                     "model_name": model_name,
                     "src_vocab": src_tok.vocab_size,
                     "tgt_vocab": tgt_tok.vocab_size,
-                    "config": CFG.__dict__,
+                    "config": checkpoint_config(),
                     "valid_loss": valid_loss,
                 },
                 best_path,
@@ -167,5 +188,18 @@ def train(model_name: str) -> Path:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="gru_attention", choices=sorted(MODEL_MODULES))
+    parser.add_argument("--epochs", type=int, help="Override config epochs for this run.")
+    parser.add_argument("--batch-size", type=int, help="Override config batch size for this run.")
+    parser.add_argument("--train-limit", type=int, help="Use only the first N training rows.")
+    parser.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
+    parser.add_argument("--skip-existing", action="store_true", help="Do not retrain if checkpoint exists.")
     args = parser.parse_args()
-    train(args.model)
+    if args.epochs:
+        CFG.epochs = args.epochs
+    if args.batch_size:
+        CFG.batch_size = args.batch_size
+    if args.train_limit:
+        CFG.train_limit = args.train_limit
+    if args.valid_limit:
+        CFG.valid_limit = args.valid_limit
+    train(args.model, skip_existing=args.skip_existing)

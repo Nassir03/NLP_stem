@@ -51,6 +51,7 @@ def main():
     p.add_argument("--batch-size", type=int, help="Override batch size for neural training.")
     p.add_argument("--train-limit", type=int, help="Use only the first N train rows.")
     p.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
+    p.add_argument("--test-limit", type=int, help="Use only the first N test rows.")
     p.add_argument("--skip-existing", action="store_true", help="Skip neural models with checkpoints.")
     p.add_argument("--iterations", type=int, default=5, help="SMT EM iterations.")
     p.add_argument(
@@ -77,6 +78,8 @@ def main():
             cmd += ["--train-limit", str(args.train_limit)]
         if args.valid_limit:
             cmd += ["--valid-limit", str(args.valid_limit)]
+        if args.test_limit:
+            cmd += ["--test-limit", str(args.test_limit)]
         if args.skip_existing:
             cmd += ["--skip-existing"]
         run(*cmd)
@@ -91,6 +94,8 @@ def main():
                 cmd += ["--train-limit", str(args.train_limit)]
             if args.valid_limit:
                 cmd += ["--valid-limit", str(args.valid_limit)]
+            if args.test_limit:
+                cmd += ["--test-limit", str(args.test_limit)]
             if args.skip_existing:
                 cmd += ["--skip-existing"]
             run(*cmd)

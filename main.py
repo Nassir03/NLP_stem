@@ -7,7 +7,7 @@ import torch
 
 from config import CFG
 
-PROJECT_VERSION = "2026-07-20-all-models-50ep-no-generation"
+PROJECT_VERSION = "2026-07-21-50ep-beam-stem-eval"
 
 NEURAL_MODELS = [
     "rnn_seq2seq",
@@ -57,6 +57,14 @@ def main():
     p.add_argument("--epochs", type=int, help="Override epochs for neural training.")
     p.add_argument("--patience", type=int, help="Override early-stopping patience.")
     p.add_argument("--batch-size", type=int, help="Override batch size for neural training.")
+    p.add_argument("--beam-size", type=int, default=CFG.beam_size, help="Beam width for generated evaluation.")
+    p.add_argument("--length-penalty", type=float, default=0.6, help="Beam-search length penalty.")
+    p.add_argument(
+        "--decode-method",
+        choices=["beam", "greedy"],
+        default="beam",
+        help="Decoder used only by generate_eval/generate_all.",
+    )
     p.add_argument("--train-limit", type=int, help="Use only the first N train rows.")
     p.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
     p.add_argument("--test-limit", type=int, help="Use only the first N test rows.")
@@ -122,12 +130,36 @@ def main():
             cmd += ["--predictions", args.predictions]
         run(*cmd)
     elif args.stage == "generate_eval":
-        cmd = ["-m", "evaluation.translation_metrics", "--model", args.model, "--generate"]
+        cmd = [
+            "-m",
+            "evaluation.translation_metrics",
+            "--model",
+            args.model,
+            "--generate",
+            "--decode-method",
+            args.decode_method,
+            "--beam-size",
+            str(args.beam_size),
+            "--length-penalty",
+            str(args.length_penalty),
+        ]
         if args.limit: cmd += ["--limit", str(args.limit)]
         run(*cmd)
     elif args.stage == "generate_all":
         for model in NEURAL_MODELS:
-            cmd = ["-m", "evaluation.translation_metrics", "--model", model, "--generate"]
+            cmd = [
+                "-m",
+                "evaluation.translation_metrics",
+                "--model",
+                model,
+                "--generate",
+                "--decode-method",
+                args.decode_method,
+                "--beam-size",
+                str(args.beam_size),
+                "--length-penalty",
+                str(args.length_penalty),
+            ]
             if args.limit:
                 cmd += ["--limit", str(args.limit)]
             run(*cmd)

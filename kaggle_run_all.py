@@ -8,7 +8,7 @@ import torch
 
 from main import NEURAL_MODELS
 
-RUNNER_VERSION = "2026-07-20-transformer-best-no-generation"
+RUNNER_VERSION = "2026-07-20-all-models-50ep-no-generation"
 
 
 def run(*args: str) -> None:
@@ -48,11 +48,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
             run(*smt_generate)
             run("main.py", "smt_eval")
 
-    models = args.models or (NEURAL_MODELS if args.compare_all else ["transformer"])
+    models = args.models or (["transformer"] if args.transformer_only else NEURAL_MODELS)
     for model in models:
         train_cmd = ["main.py", "train", "--model", model]
         if args.epochs:
             train_cmd += ["--epochs", str(args.epochs)]
+        if args.patience:
+            train_cmd += ["--patience", str(args.patience)]
         if args.batch_size:
             train_cmd += ["--batch-size", str(args.batch_size)]
         if args.train_limit:
@@ -107,10 +109,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models", nargs="+", choices=NEURAL_MODELS)
     parser.add_argument(
-        "--compare-all",
+        "--transformer-only",
         action="store_true",
-        help="Train all neural architectures. Default trains Transformer only for best short-time results.",
+        help="Train only Transformer. Default trains all neural models for report comparison.",
     )
+    parser.add_argument("--patience", type=int, default=None, help="Early-stopping patience.")
     parser.add_argument(
         "--quick",
         action="store_true",
@@ -138,18 +141,16 @@ def parse_args() -> argparse.Namespace:
         args.eval_limit = args.eval_limit or 32
         args.smt_limit = min(args.smt_limit, 1000)
     elif args.best_quality:
-        args.epochs = args.epochs or 20
+        args.epochs = args.epochs or 50
         args.batch_size = args.batch_size or 128
-        if not args.compare_all and not args.models:
-            args.train_limit = args.train_limit or None
-            args.valid_limit = args.valid_limit or None
+        args.patience = args.patience or 10
     elif not args.full_data:
-        # Default Kaggle run: focus on the best observed architecture long enough
-        # to improve, without generating answer/prediction files.
-        args.epochs = args.epochs or 12
+        # Default report run: all neural architectures, 50 epochs, no generated
+        # answer files. Use --quick for a smoke test or --transformer-only for
+        # a shorter single-model experiment.
+        args.epochs = args.epochs or 50
         args.batch_size = args.batch_size or 128
-        args.train_limit = args.train_limit or 40000
-        args.valid_limit = args.valid_limit or 5000
+        args.patience = args.patience or 10
         args.smt_limit = min(args.smt_limit, 20000)
 
     return args

@@ -152,6 +152,22 @@ def write_history(path: Path, rows: list[dict[str, float | int]]) -> None:
         writer.writerows(rows)
 
 
+def load_history(path: Path) -> list[dict[str, float | int]]:
+    """Load an existing training history when a Kaggle run is resumed."""
+    if not path.exists():
+        return []
+    rows: list[dict[str, float | int]] = []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            rows.append({
+                "epoch": int(row["epoch"]),
+                "train_loss": float(row["train_loss"]),
+                "valid_loss": float(row["valid_loss"]),
+                "valid_ppl": float(row["valid_ppl"]),
+            })
+    return rows
+
+
 def checkpoint_config() -> dict[str, str | int | float | None]:
     """Store a portable config snapshot without OS-specific Path objects."""
     return {
@@ -160,7 +176,58 @@ def checkpoint_config() -> dict[str, str | int | float | None]:
     }
 
 
-def train(model_name: str, skip_existing: bool = False) -> Path:
+def save_training_checkpoint(
+    path: Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler,
+    scaler,
+    model_name: str,
+    src_vocab: int,
+    tgt_vocab: int,
+    epoch: int,
+    best_loss: float,
+    stale_epochs: int,
+) -> None:
+    """Save resumable training state after each completed epoch."""
+    state = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "model_name": model_name,
+        "src_vocab": src_vocab,
+        "tgt_vocab": tgt_vocab,
+        "config": checkpoint_config(),
+        "epoch": epoch,
+        "best_loss": best_loss,
+        "stale_epochs": stale_epochs,
+    }
+    if scaler is not None:
+        state["scaler"] = scaler.state_dict()
+    torch.save(state, path)
+
+
+def load_training_checkpoint(path: Path, model, optimizer, scheduler, scaler) -> tuple[int, float, int]:
+    """Restore model and optimizer state for interrupted Kaggle runs."""
+    try:
+        checkpoint = torch.load(path, map_location=CFG.device, weights_only=False)
+    except TypeError:
+        checkpoint = torch.load(path, map_location=CFG.device)
+    model.load_state_dict(checkpoint["model"])
+    if "optimizer" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer"])
+    if "scheduler" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler"])
+    if scaler is not None and "scaler" in checkpoint:
+        scaler.load_state_dict(checkpoint["scaler"])
+    return (
+        int(checkpoint.get("epoch", 0)) + 1,
+        float(checkpoint.get("best_loss", math.inf)),
+        int(checkpoint.get("stale_epochs", 0)),
+    )
+
+
+def train(model_name: str, skip_existing: bool = False, resume: bool = False) -> Path:
     """Train one model and save the best validation checkpoint."""
     ensure_runtime_defaults()
     set_seed(CFG.seed)
@@ -185,50 +252,87 @@ def train(model_name: str, skip_existing: bool = False) -> Path:
 
     best_loss = math.inf
     best_path = CFG.checkpoint_dir / f"{model_name}_best.pt"
+    last_path = CFG.checkpoint_dir / f"{model_name}_last.pt"
+    history_path = CFG.results_dir / f"{model_name}_training_history.csv"
     if skip_existing and best_path.exists():
         print(f"Skipping {model_name}; checkpoint already exists: {best_path}")
         return best_path
     stale_epochs = 0
+    start_epoch = 1
     history: list[dict[str, float | int]] = []
-
-    for epoch in range(1, CFG.epochs + 1):
-        train_loss = run_epoch(model, model_name, loaders["train"], criterion, optimizer, scaler)
-        valid_loss = run_epoch(model, model_name, loaders["validation"], criterion)
-        valid_ppl = math.exp(min(valid_loss, 20.0))
-        history.append({
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "valid_loss": valid_loss,
-            "valid_ppl": valid_ppl,
-        })
-        print(
-            f"epoch={epoch} train_loss={train_loss:.4f} "
-            f"valid_loss={valid_loss:.4f} valid_ppl={valid_ppl:.2f} "
-            f"lr={optimizer.param_groups[0]['lr']:.2e}"
+    if resume and last_path.exists():
+        start_epoch, best_loss, stale_epochs = load_training_checkpoint(
+            last_path, model, optimizer, scheduler, scaler
         )
-        scheduler.step(valid_loss)
+        history = [row for row in load_history(history_path) if int(row["epoch"]) < start_epoch]
+        print(f"Resuming {model_name} from epoch {start_epoch}/{CFG.epochs}.")
+        if start_epoch > CFG.epochs:
+            print(f"{model_name} already completed {CFG.epochs} epochs.")
+            return best_path
 
-        if valid_loss < best_loss:
-            best_loss = valid_loss
-            stale_epochs = 0
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "model_name": model_name,
-                    "src_vocab": src_tok.vocab_size,
-                    "tgt_vocab": tgt_tok.vocab_size,
-                    "config": checkpoint_config(),
-                    "valid_loss": valid_loss,
-                },
-                best_path,
+    try:
+        epoch_iter = range(start_epoch, CFG.epochs + 1)
+        for epoch in epoch_iter:
+            train_loss = run_epoch(model, model_name, loaders["train"], criterion, optimizer, scaler)
+            valid_loss = run_epoch(model, model_name, loaders["validation"], criterion)
+            valid_ppl = math.exp(min(valid_loss, 20.0))
+            history.append({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "valid_loss": valid_loss,
+                "valid_ppl": valid_ppl,
+            })
+            print(
+                f"epoch={epoch} train_loss={train_loss:.4f} "
+                f"valid_loss={valid_loss:.4f} valid_ppl={valid_ppl:.2f} "
+                f"lr={optimizer.param_groups[0]['lr']:.2e}"
             )
-        else:
-            stale_epochs += 1
+            scheduler.step(valid_loss)
+
+            if valid_loss < best_loss:
+                best_loss = valid_loss
+                stale_epochs = 0
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "model_name": model_name,
+                        "src_vocab": src_tok.vocab_size,
+                        "tgt_vocab": tgt_tok.vocab_size,
+                        "config": checkpoint_config(),
+                        "valid_loss": valid_loss,
+                    },
+                    best_path,
+                )
+            else:
+                stale_epochs += 1
+
+            save_training_checkpoint(
+                last_path,
+                model,
+                optimizer,
+                scheduler,
+                scaler,
+                model_name,
+                src_tok.vocab_size,
+                tgt_tok.vocab_size,
+                epoch,
+                best_loss,
+                stale_epochs,
+            )
+            write_history(history_path, history)
+
             if stale_epochs >= CFG.patience:
                 print(f"Early stopping after {CFG.patience} epochs without validation improvement.")
                 break
+    except KeyboardInterrupt:
+        write_history(history_path, history)
+        print(
+            f"Interrupted during {model_name}. Completed epoch history was saved. "
+            f"Resume with: python main.py train --model {model_name} --epochs {CFG.epochs} --resume"
+        )
+        raise
 
-    write_history(CFG.results_dir / f"{model_name}_training_history.csv", history)
+    write_history(history_path, history)
     print(f"Best checkpoint: {best_path}")
     return best_path
 
@@ -243,6 +347,7 @@ if __name__ == "__main__":
     parser.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
     parser.add_argument("--test-limit", type=int, help="Use only the first N test rows.")
     parser.add_argument("--skip-existing", action="store_true", help="Do not retrain if checkpoint exists.")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoints/<model>_last.pt when present.")
     args = parser.parse_args()
     if args.epochs:
         CFG.epochs = args.epochs
@@ -256,4 +361,4 @@ if __name__ == "__main__":
         CFG.valid_limit = args.valid_limit
     if args.test_limit:
         CFG.test_limit = args.test_limit
-    train(args.model, skip_existing=args.skip_existing)
+    train(args.model, skip_existing=args.skip_existing, resume=args.resume)

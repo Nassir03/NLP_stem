@@ -49,8 +49,11 @@ def get_loaders():
     }
     for name, shuffle in [("train", True), ("validation", False), ("test", False)]:
         ds = TranslationDataset(CFG.split_dir / f"{name}.csv", src_tok, tgt_tok, limits[name])
+        num_workers = max(int(getattr(CFG, "num_workers", 0)), 0)
         loaders[name] = DataLoader(
             ds, batch_size=CFG.batch_size, shuffle=shuffle,
-            collate_fn=collate, num_workers=0, pin_memory=torch.cuda.is_available()
+            collate_fn=collate, num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0,
         )
     return loaders, src_tok, tgt_tok

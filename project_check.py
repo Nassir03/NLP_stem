@@ -9,7 +9,7 @@ import torch
 from config import CFG, ensure_runtime_defaults
 from kaggle_utils import sync_readonly_artifacts
 from preprocessing.tokenizer import load_tokenizers
-from training.train import MODEL_MODULES, build_model
+from training.train import MODEL_MODULES, TRAINABLE_MODELS, batch_loss, build_model
 
 
 REQUIRED_SPLIT_COLUMNS = {"source", "target"}
@@ -61,8 +61,27 @@ def check_model_registry(src_vocab: int, tgt_vocab: int) -> None:
         print(f"[OK] {model_name}{duplicate}: {total_params:,} parameters")
 
 
+def check_model_forward(model_name: str, src_tok, tgt_tok) -> None:
+    """Run one tiny loss pass through a model without training or decoding."""
+    model = build_model(model_name, src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
+    src = torch.tensor([src_tok.encode("science is useful")[:8]], device=CFG.device)
+    tgt = torch.tensor([tgt_tok.encode("sayansi ni muhimu")[:8]], device=CFG.device)
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=tgt_tok.pad_id)
+    with torch.no_grad():
+        loss = batch_loss(model, model_name, src, tgt, criterion, teacher_forcing=0.0)
+    if not torch.isfinite(loss):
+        raise ValueError(f"{model_name} produced a non-finite smoke-test loss")
+    print(f"[OK] {model_name} forward pass on {CFG.device}: loss={float(loss):.4f}")
+
+
+def check_trainable_forwards(src_tok, tgt_tok) -> None:
+    """Smoke-test every trainable architecture used by the Kaggle full run."""
+    for model_name in TRAINABLE_MODELS:
+        check_model_forward(model_name, src_tok, tgt_tok)
+
+
 def check_default_forward(src_tok, tgt_tok) -> None:
-    """Run one tiny forward pass through the default model without training or decoding."""
+    """Keep the legacy shape check for the default attention model."""
     model = build_model("gru_attention", src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
     src = torch.tensor([src_tok.encode("science is useful")[:8]], device=CFG.device)
     tgt = torch.tensor([tgt_tok.encode("sayansi ni muhimu")[:8]], device=CFG.device)
@@ -80,6 +99,7 @@ def check_project() -> None:
     check_splits()
     src_tok, tgt_tok = check_tokenizers()
     check_model_registry(src_tok.vocab_size, tgt_tok.vocab_size)
+    check_trainable_forwards(src_tok, tgt_tok)
     check_default_forward(src_tok, tgt_tok)
     print("Project check passed without generating translation answers.")
 

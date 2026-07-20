@@ -9,10 +9,11 @@ from config import CFG
 
 
 def summarize_results(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
-    """Combine all metric CSV files into one sorted comparison table."""
+    """Combine generated prediction metric CSV files into one sorted comparison table."""
     metric_files = sorted(results_dir.glob("*_metrics.csv"))
     if not metric_files:
-        raise FileNotFoundError(f"No metric files found in {results_dir}")
+        print(f"No generated metric files found in {results_dir}; using training histories.")
+        return summarize_training_histories(results_dir)
 
     frames = []
     for path in metric_files:
@@ -31,7 +32,62 @@ def summarize_results(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
     return summary
 
 
+def summarize_training_histories(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
+    """Rank trained neural models by their best validation loss without decoding."""
+    history_files = [
+        path
+        for path in sorted(results_dir.glob("*_training_history.csv"))
+        if not path.name.startswith("combined_")
+    ]
+    if not history_files:
+        raise FileNotFoundError(f"No training history files found in {results_dir}")
+
+    rows = []
+    for path in history_files:
+        df = pd.read_csv(path)
+        if df.empty:
+            continue
+        if "valid_loss" not in df.columns and "validation_loss" in df.columns:
+            df = df.rename(columns={"validation_loss": "valid_loss"})
+        if "valid_ppl" not in df.columns:
+            df["valid_ppl"] = float("nan")
+        if "train_loss" not in df.columns and "training_loss" in df.columns:
+            df = df.rename(columns={"training_loss": "train_loss"})
+        missing = {"epoch", "valid_loss", "train_loss"} - set(df.columns)
+        if missing:
+            print(f"Skipping {path}; missing columns: {sorted(missing)}")
+            continue
+        best = df.loc[df["valid_loss"].idxmin()]
+        model = path.name.removesuffix("_training_history.csv")
+        rows.append({
+            "model": model,
+            "best_epoch": int(best["epoch"]),
+            "best_valid_loss": float(best["valid_loss"]),
+            "best_valid_ppl": float(best["valid_ppl"]),
+            "final_train_loss": float(df.iloc[-1]["train_loss"]),
+            "history_file": path.name,
+        })
+
+    if not rows:
+        raise ValueError(f"No usable training history files found in {results_dir}")
+
+    summary = pd.DataFrame(rows).sort_values("best_valid_loss").reset_index(drop=True)
+    out_path = results_dir / "all_model_training_summary.csv"
+    summary.to_csv(out_path, index=False)
+    print(summary.to_string(index=False))
+    print(f"Saved training summary: {out_path}")
+    return summary
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.parse_args()
-    summarize_results()
+    parser.add_argument(
+        "--training",
+        action="store_true",
+        help="Summarize training histories instead of generated prediction metrics.",
+    )
+    args = parser.parse_args()
+    if args.training:
+        summarize_training_histories()
+    else:
+        summarize_results()

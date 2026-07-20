@@ -46,6 +46,32 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = True
+
+
+def amp_enabled() -> bool:
+    """Use mixed precision on CUDA for faster Kaggle training."""
+    return bool(getattr(CFG, "use_amp", True) and CFG.device == "cuda")
+
+
+def make_grad_scaler():
+    """Create a GradScaler across PyTorch versions."""
+    if not amp_enabled():
+        return None
+    try:
+        return torch.amp.GradScaler("cuda")
+    except (AttributeError, TypeError):
+        return torch.cuda.amp.GradScaler()
+
+
+def autocast_context():
+    """Create an autocast context across PyTorch versions."""
+    if not amp_enabled():
+        return torch.amp.autocast("cpu", enabled=False)
+    try:
+        return torch.amp.autocast("cuda")
+    except (AttributeError, TypeError):
+        return torch.cuda.amp.autocast()
 
 
 def build_model(model_name: str, src_vocab: int, tgt_vocab: int) -> nn.Module:
@@ -76,7 +102,8 @@ def batch_loss(model: nn.Module, model_name: str, src: torch.Tensor, tgt: torch.
 
 
 def run_epoch(model: nn.Module, model_name: str, loader, criterion: nn.Module,
-              optimizer: torch.optim.Optimizer | None = None) -> float:
+              optimizer: torch.optim.Optimizer | None = None,
+              scaler=None) -> float:
     training = optimizer is not None
     model.train(training)
     total_loss = 0.0
@@ -88,7 +115,7 @@ def run_epoch(model: nn.Module, model_name: str, loader, criterion: nn.Module,
         if training:
             optimizer.zero_grad(set_to_none=True)
 
-        with torch.set_grad_enabled(training):
+        with torch.set_grad_enabled(training), autocast_context():
             loss = batch_loss(
                 model,
                 model_name,
@@ -97,7 +124,14 @@ def run_epoch(model: nn.Module, model_name: str, loader, criterion: nn.Module,
                 criterion,
                 CFG.teacher_forcing if training else 0.0,
             )
-            if training:
+        if training:
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
@@ -137,6 +171,13 @@ def train(model_name: str, skip_existing: bool = False) -> Path:
     model = build_model(model_name, src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
     criterion = nn.CrossEntropyLoss(ignore_index=tgt_tok.pad_id)
     optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.learning_rate)
+    scaler = make_grad_scaler()
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=getattr(CFG, "lr_factor", 0.5),
+        patience=getattr(CFG, "lr_patience", 2),
+    )
 
     best_loss = math.inf
     best_path = CFG.checkpoint_dir / f"{model_name}_best.pt"
@@ -147,7 +188,7 @@ def train(model_name: str, skip_existing: bool = False) -> Path:
     history: list[dict[str, float | int]] = []
 
     for epoch in range(1, CFG.epochs + 1):
-        train_loss = run_epoch(model, model_name, loaders["train"], criterion, optimizer)
+        train_loss = run_epoch(model, model_name, loaders["train"], criterion, optimizer, scaler)
         valid_loss = run_epoch(model, model_name, loaders["validation"], criterion)
         valid_ppl = math.exp(min(valid_loss, 20.0))
         history.append({
@@ -158,8 +199,10 @@ def train(model_name: str, skip_existing: bool = False) -> Path:
         })
         print(
             f"epoch={epoch} train_loss={train_loss:.4f} "
-            f"valid_loss={valid_loss:.4f} valid_ppl={valid_ppl:.2f}"
+            f"valid_loss={valid_loss:.4f} valid_ppl={valid_ppl:.2f} "
+            f"lr={optimizer.param_groups[0]['lr']:.2e}"
         )
+        scheduler.step(valid_loss)
 
         if valid_loss < best_loss:
             best_loss = valid_loss

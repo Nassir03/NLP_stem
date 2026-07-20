@@ -6,6 +6,7 @@ import sys
 
 import torch
 
+from config import cuda_status
 from main import NEURAL_MODELS
 
 RUNNER_VERSION = "2026-07-21-50ep-beam-stem-eval"
@@ -20,13 +21,18 @@ def run(*args: str) -> None:
 def run_pipeline(args: argparse.Namespace) -> None:
     """Execute the complete Kaggle workflow in the correct project order."""
     print(f"[kaggle_run_all] version={RUNNER_VERSION}", flush=True)
-    if args.require_gpu and not torch.cuda.is_available():
-        raise RuntimeError(
-            "CUDA GPU is not available. In Kaggle, enable it from "
-            "Notebook settings -> Accelerator -> GPU, then restart and rerun."
+    cuda_ok, cuda_message = cuda_status()
+    if args.require_gpu and not cuda_ok:
+        raise SystemExit(
+            cuda_message
+            + "\nFor Kaggle final training, select a supported GPU such as T4 or A100. "
+            "Your shown P100 has compute capability sm_60, while this PyTorch build "
+            "supports sm_70 and newer. Use --allow-cpu only for quick smoke tests."
         )
-    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    device = torch.cuda.get_device_name(0) if cuda_ok else "CPU"
     print(f"[kaggle_run_all] torch={torch.__version__} device={device}", flush=True)
+    if not cuda_ok:
+        print(f"[kaggle_run_all] {cuda_message}", flush=True)
     if not args.skip_prepare:
         run("main.py", "prepare")
     if not args.skip_tokenize:

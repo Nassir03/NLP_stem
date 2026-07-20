@@ -8,7 +8,7 @@ import torch
 
 from main import NEURAL_MODELS
 
-RUNNER_VERSION = "2026-07-20-gpu-short-best-no-generation"
+RUNNER_VERSION = "2026-07-20-transformer-best-no-generation"
 
 
 def run(*args: str) -> None:
@@ -48,7 +48,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             run(*smt_generate)
             run("main.py", "smt_eval")
 
-    models = args.models or NEURAL_MODELS
+    models = args.models or (NEURAL_MODELS if args.compare_all else ["transformer"])
     for model in models:
         train_cmd = ["main.py", "train", "--model", model]
         if args.epochs:
@@ -107,6 +107,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models", nargs="+", choices=NEURAL_MODELS)
     parser.add_argument(
+        "--compare-all",
+        action="store_true",
+        help="Train all neural architectures. Default trains Transformer only for best short-time results.",
+    )
+    parser.add_argument(
         "--quick",
         action="store_true",
         help="Fast Kaggle smoke test: tiny data limits and one epoch.",
@@ -133,14 +138,18 @@ def parse_args() -> argparse.Namespace:
         args.eval_limit = args.eval_limit or 32
         args.smt_limit = min(args.smt_limit, 1000)
     elif args.best_quality:
-        args.epochs = args.epochs or 25
-        args.batch_size = args.batch_size or 64
+        args.epochs = args.epochs or 20
+        args.batch_size = args.batch_size or 128
+        if not args.compare_all and not args.models:
+            args.train_limit = args.train_limit or None
+            args.valid_limit = args.valid_limit or None
     elif not args.full_data:
-        # Default Kaggle run: short enough to finish, large enough to compare models.
-        args.epochs = args.epochs or 6
-        args.batch_size = args.batch_size or 64
-        args.train_limit = args.train_limit or 20000
-        args.valid_limit = args.valid_limit or 3000
+        # Default Kaggle run: focus on the best observed architecture long enough
+        # to improve, without generating answer/prediction files.
+        args.epochs = args.epochs or 12
+        args.batch_size = args.batch_size or 128
+        args.train_limit = args.train_limit or 40000
+        args.valid_limit = args.valid_limit or 5000
         args.smt_limit = min(args.smt_limit, 20000)
 
     return args

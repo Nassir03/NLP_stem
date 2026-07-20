@@ -237,6 +237,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="gru_attention", choices=sorted(MODEL_MODULES))
     parser.add_argument("--epochs", type=int, help="Override config epochs for this run.")
+    parser.add_argument("--patience", type=int, help="Override early-stopping patience for this run.")
     parser.add_argument("--batch-size", type=int, help="Override config batch size for this run.")
     parser.add_argument("--train-limit", type=int, help="Use only the first N training rows.")
     parser.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
@@ -245,6 +246,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.epochs:
         CFG.epochs = args.epochs
+    if args.patience:
+        CFG.patience = args.patience
     if args.batch_size:
         CFG.batch_size = args.batch_size
     if args.train_limit:

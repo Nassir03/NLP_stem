@@ -53,7 +53,7 @@ def get_loaders():
         loaders[name] = DataLoader(
             ds, batch_size=CFG.batch_size, shuffle=shuffle,
             collate_fn=collate, num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=CFG.device == "cuda",
             persistent_workers=num_workers > 0,
         )
     return loaders, src_tok, tgt_tok

@@ -83,8 +83,8 @@ def check_trainable_forwards(src_tok, tgt_tok) -> None:
 
 def check_attention_mask_dtype() -> None:
     """Catch AMP-style mask overflow in attention before Kaggle training starts."""
-    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     device = CFG.device
+    dtype = torch.float16 if device == "cuda" else torch.float32
     attn = BahdanauAttention(hidden=4).to(device=device, dtype=dtype)
     decoder_hidden = torch.randn(2, 4, device=device, dtype=dtype)
     encoder_outputs = torch.randn(2, 3, 4, device=device, dtype=dtype)

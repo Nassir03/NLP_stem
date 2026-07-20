@@ -7,7 +7,7 @@ import torch
 
 from config import CFG
 
-PROJECT_VERSION = "2026-07-20-transformer-best-no-generation"
+PROJECT_VERSION = "2026-07-20-all-models-50ep-no-generation"
 
 NEURAL_MODELS = [
     "rnn_seq2seq",
@@ -55,6 +55,7 @@ def main():
     p.add_argument("--model", default="gru_attention")
     p.add_argument("--limit", type=int)
     p.add_argument("--epochs", type=int, help="Override epochs for neural training.")
+    p.add_argument("--patience", type=int, help="Override early-stopping patience.")
     p.add_argument("--batch-size", type=int, help="Override batch size for neural training.")
     p.add_argument("--train-limit", type=int, help="Use only the first N train rows.")
     p.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
@@ -84,6 +85,8 @@ def main():
         cmd = ["-m", "training.train", "--model", args.model]
         if args.epochs:
             cmd += ["--epochs", str(args.epochs)]
+        if args.patience:
+            cmd += ["--patience", str(args.patience)]
         if args.batch_size:
             cmd += ["--batch-size", str(args.batch_size)]
         if args.train_limit:
@@ -100,6 +103,8 @@ def main():
             cmd = ["-m", "training.train", "--model", model]
             if args.epochs:
                 cmd += ["--epochs", str(args.epochs)]
+            if args.patience:
+                cmd += ["--patience", str(args.patience)]
             if args.batch_size:
                 cmd += ["--batch-size", str(args.batch_size)]
             if args.train_limit:

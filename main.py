@@ -7,7 +7,7 @@ import torch
 
 from config import CFG
 
-PROJECT_VERSION = "2026-07-20-gpu-short-best-no-generation"
+PROJECT_VERSION = "2026-07-20-transformer-best-no-generation"
 
 NEURAL_MODELS = [
     "rnn_seq2seq",

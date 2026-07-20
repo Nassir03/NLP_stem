@@ -5,7 +5,7 @@ import sys
 
 from config import CFG
 
-PROJECT_VERSION = "2026-07-19-kaggle-safe-config"
+PROJECT_VERSION = "2026-07-19-best-validation-no-generation"
 
 NEURAL_MODELS = [
     "rnn_seq2seq",
@@ -42,6 +42,7 @@ def main():
             "smt_generate",
             "smt_eval",
             "summarize",
+            "summarize_training",
         ],
         help=(
             "`evaluate` scores an existing prediction CSV and does not generate "
@@ -137,8 +138,10 @@ def main():
             "--predictions",
             str(CFG.results_dir / "smt_predictions.csv"),
         )
-    else:
+    elif args.stage == "summarize":
         run("-m", "evaluation.summarize_results")
+    else:
+        run("-m", "evaluation.summarize_results", "--training")
 
 if __name__ == "__main__":
     main()

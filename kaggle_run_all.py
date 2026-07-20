@@ -8,7 +8,7 @@ import torch
 
 from main import NEURAL_MODELS
 
-RUNNER_VERSION = "2026-07-20-all-models-50ep-no-generation"
+RUNNER_VERSION = "2026-07-21-50ep-beam-stem-eval"
 
 
 def run(*args: str) -> None:
@@ -68,7 +68,18 @@ def run_pipeline(args: argparse.Namespace) -> None:
         run(*train_cmd)
 
         if args.generate_predictions:
-            eval_cmd = ["main.py", "generate_eval", "--model", model]
+            eval_cmd = [
+                "main.py",
+                "generate_eval",
+                "--model",
+                model,
+                "--decode-method",
+                args.decode_method,
+                "--beam-size",
+                str(args.beam_size),
+                "--length-penalty",
+                str(args.length_penalty),
+            ]
             if args.eval_limit:
                 eval_cmd += ["--limit", str(args.eval_limit)]
             run(*eval_cmd)
@@ -100,6 +111,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--valid-limit", type=int, default=None)
     parser.add_argument("--test-limit", type=int, default=None)
     parser.add_argument("--eval-limit", type=int, default=None)
+    parser.add_argument("--decode-method", choices=["beam", "greedy"], default="beam")
+    parser.add_argument("--beam-size", type=int, default=4)
+    parser.add_argument("--length-penalty", type=float, default=0.6)
     parser.add_argument("--skip-existing", action="store_true", help="Reuse existing neural checkpoints.")
     parser.add_argument(
         "--allow-cpu",

@@ -18,8 +18,15 @@ def _env_float(name: str, default: float) -> float:
     return float(value) if value not in (None, "") else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Read boolean environment flags such as 1/true/yes/on."""
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _artifact_root() -> Path:
-    """Use Kaggle's writable directory when code is executed from read-only input."""
     if os.environ.get("KAGGLE_KERNEL_RUN_TYPE") and str(ROOT).startswith("/kaggle/input"):
         return Path("/kaggle/working") / ROOT.name
     return ROOT
@@ -63,12 +70,18 @@ class Config:
     hidden_dim: int = field(default_factory=lambda: _env_int("MT_HIDDEN_DIM", 384) or 384)
     num_layers: int = field(default_factory=lambda: _env_int("MT_NUM_LAYERS", 2) or 2)
     dropout: float = field(default_factory=lambda: _env_float("MT_DROPOUT", 0.2))
-    batch_size: int = field(default_factory=lambda: _env_int("MT_BATCH_SIZE", 64) or 64)
+    batch_size: int = field(default_factory=lambda: _env_int("MT_BATCH_SIZE", 128) or 128)
     epochs: int = field(default_factory=lambda: _env_int("MT_EPOCHS", 15) or 15)
     learning_rate: float = field(default_factory=lambda: _env_float("MT_LEARNING_RATE", 3e-4))
     teacher_forcing: float = field(default_factory=lambda: _env_float("MT_TEACHER_FORCING", 0.5))
     beam_size: int = 4
     patience: int = field(default_factory=lambda: _env_int("MT_PATIENCE", 4) or 4)
+    lr_patience: int = field(default_factory=lambda: _env_int("MT_LR_PATIENCE", 2) or 2)
+    lr_factor: float = field(default_factory=lambda: _env_float("MT_LR_FACTOR", 0.5))
+    num_workers: int = field(
+        default_factory=lambda: _env_int("MT_NUM_WORKERS", 0 if os.name == "nt" else 2) or 0
+    )
+    use_amp: bool = field(default_factory=lambda: _env_bool("MT_USE_AMP", True))
     train_limit: int | None = field(default_factory=lambda: _env_int("MT_TRAIN_LIMIT", None))
     valid_limit: int | None = field(default_factory=lambda: _env_int("MT_VALID_LIMIT", None))
     test_limit: int | None = field(default_factory=lambda: _env_int("MT_TEST_LIMIT", None))

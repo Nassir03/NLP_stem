@@ -6,7 +6,7 @@ import sys
 
 from main import NEURAL_MODELS
 
-RUNNER_VERSION = "2026-07-19-kaggle-safe-config"
+RUNNER_VERSION = "2026-07-19-best-validation-no-generation"
 
 
 def run(*args: str) -> None:
@@ -32,11 +32,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
             smt_train += ["--limit", str(args.smt_limit)]
         run(*smt_train)
 
-        smt_generate = ["main.py", "smt_generate"]
-        if args.eval_limit:
-            smt_generate += ["--limit", str(args.eval_limit)]
-        run(*smt_generate)
-        run("main.py", "smt_eval")
+        if args.generate_predictions:
+            smt_generate = ["main.py", "smt_generate"]
+            if args.eval_limit:
+                smt_generate += ["--limit", str(args.eval_limit)]
+            run(*smt_generate)
+            run("main.py", "smt_eval")
 
     models = args.models or NEURAL_MODELS
     for model in models:
@@ -55,12 +56,17 @@ def run_pipeline(args: argparse.Namespace) -> None:
             train_cmd += ["--skip-existing"]
         run(*train_cmd)
 
-        eval_cmd = ["main.py", "generate_eval", "--model", model]
-        if args.eval_limit:
-            eval_cmd += ["--limit", str(args.eval_limit)]
-        run(*eval_cmd)
+        if args.generate_predictions:
+            eval_cmd = ["main.py", "generate_eval", "--model", model]
+            if args.eval_limit:
+                eval_cmd += ["--limit", str(args.eval_limit)]
+            run(*eval_cmd)
 
-    run("-m", "evaluation.summarize_results")
+    if args.generate_predictions:
+        run("-m", "evaluation.summarize_results")
+    else:
+        run("-m", "evaluation.summarize_results", "--training")
+        run("visualization/validation_cross_entropy.py")
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,9 +76,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-prepare", action="store_true", help="Reuse existing split CSV files.")
     parser.add_argument("--skip-tokenize", action="store_true", help="Reuse existing tokenizer models.")
     parser.add_argument("--no-smt", dest="run_smt", action="store_false", help="Skip SMT baseline.")
+    parser.add_argument(
+        "--generate-predictions",
+        action="store_true",
+        help="Generate translation prediction CSVs and BLEU/chrF++/TER metrics.",
+    )
     parser.add_argument("--smt-iterations", type=int, default=5)
     parser.add_argument("--smt-limit", type=int, default=50000)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--train-limit", type=int, default=None)
     parser.add_argument("--valid-limit", type=int, default=None)
@@ -85,6 +96,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fast Kaggle smoke test: tiny data limits and one epoch.",
     )
+    parser.add_argument(
+        "--best-quality",
+        action="store_true",
+        help="Longer no-generation training preset for stronger validation results.",
+    )
     args = parser.parse_args()
 
     if args.quick:
@@ -95,6 +111,9 @@ def parse_args() -> argparse.Namespace:
         args.test_limit = args.test_limit or 64
         args.eval_limit = args.eval_limit or 32
         args.smt_limit = min(args.smt_limit, 1000)
+    elif args.best_quality:
+        args.epochs = args.epochs or 25
+        args.batch_size = args.batch_size or 64
 
     return args
 

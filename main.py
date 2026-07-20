@@ -3,9 +3,11 @@ import argparse
 import subprocess
 import sys
 
+import torch
+
 from config import CFG
 
-PROJECT_VERSION = "2026-07-19-best-validation-no-generation"
+PROJECT_VERSION = "2026-07-20-gpu-short-best-no-generation"
 
 NEURAL_MODELS = [
     "rnn_seq2seq",
@@ -30,6 +32,7 @@ def main():
         "stage",
         choices=[
             "check",
+            "device",
             "prepare",
             "tokenize",
             "preprocess_eval",
@@ -64,7 +67,12 @@ def main():
     )
     args = p.parse_args()
 
-    if args.stage == "check":
+    if args.stage == "device":
+        if torch.cuda.is_available():
+            print(f"device=cuda name={torch.cuda.get_device_name(0)}")
+        else:
+            print("device=cpu cuda_available=False")
+    elif args.stage == "check":
         run("-m", "project_check")
     elif args.stage == "prepare":
         run("-m", "preprocessing.prepare_data")

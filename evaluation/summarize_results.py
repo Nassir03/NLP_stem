@@ -10,7 +10,11 @@ from config import CFG
 
 def summarize_results(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
     """Combine generated prediction metric CSV files into one sorted comparison table."""
-    metric_files = sorted(results_dir.glob("*_metrics.csv"))
+    metric_files = [
+        path
+        for path in sorted(results_dir.glob("*_metrics.csv"))
+        if "_stem_" not in path.name
+    ]
     if not metric_files:
         print(f"No generated metric files found in {results_dir}; using training histories.")
         return summarize_training_histories(results_dir)
@@ -18,8 +22,13 @@ def summarize_results(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
     frames = []
     for path in metric_files:
         df = pd.read_csv(path)
+        if not {"bleu", "chrf++", "ter"}.issubset(df.columns):
+            print(f"Skipping {path}; not a translation metric file.")
+            continue
         df["file"] = path.name
         frames.append(df)
+    if not frames:
+        raise ValueError(f"No usable translation metric files found in {results_dir}")
 
     summary = pd.concat(frames, ignore_index=True, sort=False)
     if "bleu" in summary.columns:
@@ -29,6 +38,48 @@ def summarize_results(results_dir: Path = CFG.results_dir) -> pd.DataFrame:
     summary.to_csv(out_path, index=False)
     print(summary.to_string(index=False))
     print(f"Saved summary: {out_path}")
+    summarize_stem_scores(results_dir)
+    return summary
+
+
+def summarize_stem_scores(results_dir: Path = CFG.results_dir) -> pd.DataFrame | None:
+    """Combine per-model STEM preservation scores for report Table 3."""
+    score_files = sorted(results_dir.glob("*_stem_scores.csv"))
+    if not score_files:
+        print(f"No STEM score files found in {results_dir}.")
+        return None
+
+    frames = []
+    for path in score_files:
+        df = pd.read_csv(path)
+        if {"model", "metric", "score"} - set(df.columns):
+            print(f"Skipping {path}; missing model/metric/score columns.")
+            continue
+        frames.append(df)
+    if not frames:
+        return None
+
+    scores = pd.concat(frames, ignore_index=True)
+    scores = scores.drop_duplicates(subset=["model", "metric"], keep="last")
+    summary = (
+        scores.pivot(index="model", columns="metric", values="score")
+        .reset_index()
+        .rename(columns={
+            "term_accuracy": "term",
+            "number_accuracy": "number",
+            "symbol_accuracy": "symbol",
+            "unit_accuracy": "unit",
+        })
+    )
+    ordered_columns = ["model", "term", "number", "symbol", "unit"]
+    for column in ordered_columns:
+        if column not in summary.columns:
+            summary[column] = pd.NA
+    summary = summary[ordered_columns]
+    out_path = results_dir / "all_model_stem_summary.csv"
+    summary.to_csv(out_path, index=False)
+    print(summary.to_string(index=False))
+    print(f"Saved STEM summary: {out_path}")
     return summary
 
 

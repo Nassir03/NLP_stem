@@ -11,7 +11,9 @@ class BahdanauAttention(nn.Module):
         # decoder_hidden: [B,H], encoder_outputs: [B,S,H]
         h = decoder_hidden.unsqueeze(1).expand(-1, encoder_outputs.size(1), -1)
         e = self.score(torch.tanh(self.energy(torch.cat([h, encoder_outputs], dim=-1)))).squeeze(-1)
-        e = e.masked_fill(~src_mask, -1e9)
+        # Use a dtype-safe mask value so CUDA AMP/float16 does not overflow.
+        mask_value = torch.finfo(e.dtype).min
+        e = e.masked_fill(~src_mask, mask_value)
         weights = torch.softmax(e, dim=-1)
         context = torch.bmm(weights.unsqueeze(1), encoder_outputs).squeeze(1)
         return context, weights

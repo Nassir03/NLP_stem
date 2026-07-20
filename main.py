@@ -5,7 +5,7 @@ import sys
 
 import torch
 
-from config import CFG
+from config import CFG, cuda_status
 
 PROJECT_VERSION = "2026-07-21-50ep-beam-stem-eval"
 
@@ -77,10 +77,11 @@ def main():
     args = p.parse_args()
 
     if args.stage == "device":
-        if torch.cuda.is_available():
+        cuda_ok, cuda_message = cuda_status()
+        if cuda_ok:
             print(f"device=cuda name={torch.cuda.get_device_name(0)}")
         else:
-            print("device=cpu cuda_available=False")
+            print(f"device=cpu cuda_usable=False reason={cuda_message}")
     elif args.stage == "check":
         run("-m", "project_check")
     elif args.stage == "prepare":

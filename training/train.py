@@ -170,7 +170,11 @@ def train(model_name: str, skip_existing: bool = False) -> Path:
     loaders, src_tok, tgt_tok = get_loaders()
     model = build_model(model_name, src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
     criterion = nn.CrossEntropyLoss(ignore_index=tgt_tok.pad_id)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=CFG.learning_rate)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=CFG.learning_rate,
+        weight_decay=getattr(CFG, "weight_decay", 1e-4),
+    )
     scaler = make_grad_scaler()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,

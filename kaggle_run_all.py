@@ -71,6 +71,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             train_cmd += ["--test-limit", str(args.test_limit)]
         if args.skip_existing:
             train_cmd += ["--skip-existing"]
+        if args.resume:
+            train_cmd += ["--resume"]
         run(*train_cmd)
 
         if args.generate_predictions:
@@ -122,6 +124,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length-penalty", type=float, default=0.6)
     parser.add_argument("--skip-existing", action="store_true", help="Reuse existing neural checkpoints.")
     parser.add_argument(
+        "--no-resume",
+        dest="resume",
+        action="store_false",
+        help="Start neural training from scratch instead of resuming *_last.pt checkpoints.",
+    )
+    parser.add_argument(
         "--allow-cpu",
         dest="require_gpu",
         action="store_false",
@@ -149,6 +157,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Use full train/validation data with config/default epochs.",
     )
+    parser.set_defaults(resume=True)
     args = parser.parse_args()
     args.require_gpu = True if args.require_gpu is None else args.require_gpu
 

@@ -73,6 +73,7 @@ class Config:
     batch_size: int = field(default_factory=lambda: _env_int("MT_BATCH_SIZE", 128) or 128)
     epochs: int = field(default_factory=lambda: _env_int("MT_EPOCHS", 15) or 15)
     learning_rate: float = field(default_factory=lambda: _env_float("MT_LEARNING_RATE", 3e-4))
+    weight_decay: float = field(default_factory=lambda: _env_float("MT_WEIGHT_DECAY", 1e-4))
     teacher_forcing: float = field(default_factory=lambda: _env_float("MT_TEACHER_FORCING", 0.5))
     beam_size: int = 4
     patience: int = field(default_factory=lambda: _env_int("MT_PATIENCE", 4) or 4)

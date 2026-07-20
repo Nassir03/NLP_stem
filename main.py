@@ -69,6 +69,7 @@ def main():
     p.add_argument("--valid-limit", type=int, help="Use only the first N validation rows.")
     p.add_argument("--test-limit", type=int, help="Use only the first N test rows.")
     p.add_argument("--skip-existing", action="store_true", help="Skip neural models with checkpoints.")
+    p.add_argument("--resume", action="store_true", help="Resume interrupted neural training from *_last.pt.")
     p.add_argument("--iterations", type=int, default=5, help="SMT EM iterations.")
     p.add_argument(
         "--predictions",
@@ -106,6 +107,8 @@ def main():
             cmd += ["--test-limit", str(args.test_limit)]
         if args.skip_existing:
             cmd += ["--skip-existing"]
+        if args.resume:
+            cmd += ["--resume"]
         run(*cmd)
     elif args.stage == "train_all":
         for model in NEURAL_MODELS:
@@ -124,6 +127,8 @@ def main():
                 cmd += ["--test-limit", str(args.test_limit)]
             if args.skip_existing:
                 cmd += ["--skip-existing"]
+            if args.resume:
+                cmd += ["--resume"]
             run(*cmd)
     elif args.stage == "evaluate":
         cmd = ["-m", "evaluation.translation_metrics", "--model", args.model, "--no-generate"]

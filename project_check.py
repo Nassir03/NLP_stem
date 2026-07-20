@@ -9,6 +9,7 @@ import torch
 from config import CFG, ensure_runtime_defaults
 from kaggle_utils import sync_readonly_artifacts
 from preprocessing.tokenizer import load_tokenizers
+from models.attention import BahdanauAttention
 from training.train import MODEL_MODULES, TRAINABLE_MODELS, batch_loss, build_model
 
 
@@ -80,6 +81,21 @@ def check_trainable_forwards(src_tok, tgt_tok) -> None:
         check_model_forward(model_name, src_tok, tgt_tok)
 
 
+def check_attention_mask_dtype() -> None:
+    """Catch AMP-style mask overflow in attention before Kaggle training starts."""
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    device = CFG.device
+    attn = BahdanauAttention(hidden=4).to(device=device, dtype=dtype)
+    decoder_hidden = torch.randn(2, 4, device=device, dtype=dtype)
+    encoder_outputs = torch.randn(2, 3, 4, device=device, dtype=dtype)
+    src_mask = torch.tensor([[True, True, False], [True, False, False]], device=device)
+    with torch.no_grad():
+        context, weights = attn(decoder_hidden, encoder_outputs, src_mask)
+    if not torch.isfinite(context).all() or not torch.isfinite(weights).all():
+        raise ValueError("Attention mask produced non-finite values")
+    print(f"[OK] attention mask dtype check: dtype={dtype}")
+
+
 def check_default_forward(src_tok, tgt_tok) -> None:
     """Keep the legacy shape check for the default attention model."""
     model = build_model("gru_attention", src_tok.vocab_size, tgt_tok.vocab_size).to(CFG.device)
@@ -99,6 +115,7 @@ def check_project() -> None:
     check_splits()
     src_tok, tgt_tok = check_tokenizers()
     check_model_registry(src_tok.vocab_size, tgt_tok.vocab_size)
+    check_attention_mask_dtype()
     check_trainable_forwards(src_tok, tgt_tok)
     check_default_forward(src_tok, tgt_tok)
     print("Project check passed without generating translation answers.")

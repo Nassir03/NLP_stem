@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import re
 from collections import Counter
+from pathlib import Path
 import pandas as pd
 from config import CFG
 
@@ -27,15 +28,21 @@ def terminology_accuracy(source, prediction, glossary):
                 correct += 1
     return correct, total
 
-def evaluate_file(prediction_csv):
-    """Run STEM-focused checks against an existing prediction file."""
-    df = pd.read_csv(prediction_csv)
+def load_glossary():
+    """Load the optional manually reviewed bilingual STEM glossary."""
     glossary_path = CFG.root / "data" / "stem_glossary.csv"
-    glossary = []
-    if glossary_path.exists():
-        g = pd.read_csv(glossary_path)
-        glossary = list(zip(g.english.astype(str), g.swahili.astype(str)))
+    if not glossary_path.exists():
+        return []
+    glossary = pd.read_csv(glossary_path)
+    return list(zip(glossary.english.astype(str), glossary.swahili.astype(str)))
 
+def evaluate_dataframe(df, glossary=None):
+    """Run STEM-focused checks against an in-memory prediction table."""
+    required = {"source", "prediction"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Prediction data is missing columns: {', '.join(sorted(missing))}")
+    glossary = glossary if glossary is not None else load_glossary()
     totals = {"symbol": [0,0], "number": [0,0], "unit": [0,0], "term": [0,0]}
     error_rows = []
     for _, r in df.iterrows():
@@ -54,11 +61,32 @@ def evaluate_file(prediction_csv):
         f"{name}_accuracy": 100 * c / max(n, 1)
         for name, (c, n) in totals.items()
     }
+    return scores, totals, pd.DataFrame(error_rows)
+
+def evaluate_file(prediction_csv, model_name=None):
+    """Run STEM-focused checks against an existing prediction file."""
+    df = pd.read_csv(prediction_csv)
+    scores, totals, error_rows = evaluate_dataframe(df)
+    label = model_name or Path(prediction_csv).stem.removesuffix("_predictions")
+    CFG.results_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(error_rows).to_csv(CFG.results_dir / "error_analysis.csv", index=False)
+    rows = []
+    for name, (correct, total) in totals.items():
+        score = 100 * correct / total if total else None
+        rows.append({
+            "model": label,
+            "metric": f"{name}_accuracy",
+            "correct": correct,
+            "total": total,
+            "score": score,
+        })
+    pd.DataFrame(rows).to_csv(CFG.results_dir / f"{label}_stem_scores.csv", index=False)
     print(scores)
     return scores
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("prediction_csv")
-    evaluate_file(p.parse_args().prediction_csv)
+    p.add_argument("--model")
+    args = p.parse_args()
+    evaluate_file(args.prediction_csv, args.model)

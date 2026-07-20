@@ -31,6 +31,39 @@ def _artifact_root() -> Path:
         return Path("/kaggle/working") / ROOT.name
     return ROOT
 
+
+_CUDA_STATUS: tuple[bool, str] | None = None
+
+
+def cuda_status() -> tuple[bool, str]:
+    """Return whether CUDA can actually execute kernels in this environment."""
+    global _CUDA_STATUS
+    if _CUDA_STATUS is not None:
+        return _CUDA_STATUS
+    if not torch.cuda.is_available():
+        _CUDA_STATUS = (False, "CUDA is not available.")
+        return _CUDA_STATUS
+    try:
+        name = torch.cuda.get_device_name(0)
+        capability = torch.cuda.get_device_capability(0)
+        probe = torch.empty(1, device="cuda")
+        probe += 1
+        torch.cuda.synchronize()
+        _CUDA_STATUS = (True, f"CUDA is usable: {name}, capability sm_{capability[0]}{capability[1]}.")
+    except Exception as exc:
+        _CUDA_STATUS = (
+            False,
+            "CUDA is visible but cannot run PyTorch kernels in this environment. "
+            f"{type(exc).__name__}: {exc}",
+        )
+    return _CUDA_STATUS
+
+
+def select_device() -> str:
+    """Use CUDA only when PyTorch can execute a real kernel on the detected GPU."""
+    usable, _ = cuda_status()
+    return "cuda" if usable else "cpu"
+
 @dataclass
 class Config:
     root: Path = ROOT
@@ -87,7 +120,7 @@ class Config:
     valid_limit: int | None = field(default_factory=lambda: _env_int("MT_VALID_LIMIT", None))
     test_limit: int | None = field(default_factory=lambda: _env_int("MT_TEST_LIMIT", None))
 
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = field(default_factory=select_device)
 
     def __post_init__(self) -> None:
         self.processed_dir = self.artifact_root / "data" / "processed"

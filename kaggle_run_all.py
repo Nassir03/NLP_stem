@@ -4,9 +4,11 @@ import argparse
 import subprocess
 import sys
 
+import torch
+
 from main import NEURAL_MODELS
 
-RUNNER_VERSION = "2026-07-19-best-validation-no-generation"
+RUNNER_VERSION = "2026-07-20-gpu-short-best-no-generation"
 
 
 def run(*args: str) -> None:
@@ -18,6 +20,13 @@ def run(*args: str) -> None:
 def run_pipeline(args: argparse.Namespace) -> None:
     """Execute the complete Kaggle workflow in the correct project order."""
     print(f"[kaggle_run_all] version={RUNNER_VERSION}", flush=True)
+    if args.require_gpu and not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA GPU is not available. In Kaggle, enable it from "
+            "Notebook settings -> Accelerator -> GPU, then restart and rerun."
+        )
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    print(f"[kaggle_run_all] torch={torch.__version__} device={device}", flush=True)
     if not args.skip_prepare:
         run("main.py", "prepare")
     if not args.skip_tokenize:
@@ -90,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-limit", type=int, default=None)
     parser.add_argument("--eval-limit", type=int, default=None)
     parser.add_argument("--skip-existing", action="store_true", help="Reuse existing neural checkpoints.")
+    parser.add_argument(
+        "--allow-cpu",
+        dest="require_gpu",
+        action="store_false",
+        help="Allow CPU training. By default this runner requires GPU.",
+    )
     parser.add_argument("--models", nargs="+", choices=NEURAL_MODELS)
     parser.add_argument(
         "--quick",
@@ -101,7 +116,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Longer no-generation training preset for stronger validation results.",
     )
+    parser.add_argument(
+        "--full-data",
+        action="store_true",
+        help="Use full train/validation data with config/default epochs.",
+    )
     args = parser.parse_args()
+    args.require_gpu = True if args.require_gpu is None else args.require_gpu
 
     if args.quick:
         args.epochs = args.epochs or 1
@@ -114,6 +135,13 @@ def parse_args() -> argparse.Namespace:
     elif args.best_quality:
         args.epochs = args.epochs or 25
         args.batch_size = args.batch_size or 64
+    elif not args.full_data:
+        # Default Kaggle run: short enough to finish, large enough to compare models.
+        args.epochs = args.epochs or 6
+        args.batch_size = args.batch_size or 64
+        args.train_limit = args.train_limit or 20000
+        args.valid_limit = args.valid_limit or 3000
+        args.smt_limit = min(args.smt_limit, 20000)
 
     return args
 
